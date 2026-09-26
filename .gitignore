@@ -45,3 +45,4 @@ current_artwork*.jpg
 # Env secrets
 .env
 .env.*
+!.env.example
