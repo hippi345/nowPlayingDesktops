@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 
 from PIL import Image, ImageDraw, ImageFont
 
+from now_playing_desktops.platforms.base import ScreenInfo
 from now_playing_desktops.runner import NowPlayingRunner, RunnerDeps
 
 ARTIFACTS_DIR = Path("/opt/cursor/artifacts")
@@ -89,6 +90,32 @@ class FakePlatform:
 
     def get_primary_screen_size(self) -> tuple[int, int]:
         return self.screen
+
+    def list_screens(self) -> list[ScreenInfo]:
+        return [
+            ScreenInfo(
+                screen_id="primary",
+                width=self.screen[0],
+                height=self.screen[1],
+                is_primary=True,
+            )
+        ]
+
+    def supports_per_screen_wallpaper(self) -> bool:
+        return False
+
+    def capture_restore_snapshot(self) -> dict:
+        return {
+            "backend": "fake",
+            "path": str(self.wallpaper) if self.wallpaper else None,
+        }
+
+    def apply_restore_snapshot(self, snapshot: dict) -> None:
+        raw = snapshot.get("path")
+        if raw:
+            path = Path(raw)
+            if path.is_file():
+                self.set_wallpaper(path)
 
 
 def make_runner(

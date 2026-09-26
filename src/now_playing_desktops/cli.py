@@ -68,6 +68,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override the session state file path.",
     )
+
+    autostart_parser = subparsers.add_parser(
+        "autostart",
+        help="Enable or disable login autostart for the wallpaper runner.",
+    )
+    autostart_parser.add_argument(
+        "action",
+        choices=("enable", "disable", "status"),
+        help="Register, remove, or query autostart.",
+    )
     return parser
 
 
@@ -108,6 +118,25 @@ def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _autostart(args: argparse.Namespace) -> int:
+    from now_playing_desktops.platforms.autostart import (
+        autostart_enabled,
+        disable_autostart,
+        enable_autostart,
+    )
+
+    if args.action == "status":
+        print("enabled" if autostart_enabled() else "disabled")
+        return 0
+    if args.action == "enable":
+        enable_autostart()
+        print("Autostart enabled")
+        return 0
+    disable_autostart()
+    print("Autostart disabled")
+    return 0
+
+
 def _restore(args: argparse.Namespace) -> int:
     try:
         platform = get_platform()
@@ -135,6 +164,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     if args.command == "restore":
         return _restore(args)
+    if args.command == "autostart":
+        return _autostart(args)
     parser.error(f"Unknown command {args.command!r}")
     return 2
 

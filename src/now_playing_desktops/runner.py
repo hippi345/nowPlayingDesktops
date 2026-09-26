@@ -64,6 +64,21 @@ class NowPlayingRunner:
 
     def restore_original_wallpaper(self) -> bool:
         state = WallpaperSessionState.load(self.deps.state_path)
+        snapshot = state.original_wallpaper_snapshot
+        if snapshot:
+            try:
+                self.deps.platform.apply_restore_snapshot(snapshot)
+            except Exception:
+                logger.exception("Failed to apply wallpaper restore snapshot")
+                state.session_active = False
+                state.save(self.deps.state_path)
+                return False
+            state.session_active = False
+            state.save(self.deps.state_path)
+            self._last_applied = None
+            logger.info("Restored original wallpaper from snapshot")
+            return True
+
         original = state.original_wallpaper_path
         if not original:
             logger.info("No saved original wallpaper to restore")
@@ -91,10 +106,13 @@ class NowPlayingRunner:
             generated_dir=generated_dir,
             stored_original=self._state.original_wallpaper_path,
         )
-        if original is None:
+        if original is None and not hasattr(self.deps.platform, "capture_restore_snapshot"):
             logger.debug("Skipping original capture (generated wallpaper or unknown path)")
             return
-        self._state.original_wallpaper_path = str(original.resolve())
+        if original is not None:
+            self._state.original_wallpaper_path = str(original.resolve())
+        if hasattr(self.deps.platform, "capture_restore_snapshot"):
+            self._state.original_wallpaper_snapshot = self.deps.platform.capture_restore_snapshot()
         self._state.generated_wallpaper_dir = str(generated_dir)
         if activate_session:
             self._state.session_active = True
@@ -173,9 +191,21 @@ class NowPlayingRunner:
             logger.debug("Track unchanged; skipping wallpaper update")
             return
 
-        width, height = self.deps.platform.get_primary_screen_size()
-        composed_path = self._compose_path(track, width, height)
-        self.deps.platform.set_wallpaper(composed_path)
+        screens = self.deps.platform.list_screens()
+        per_screen = self.deps.platform.supports_per_screen_wallpaper()
+        sizes = {(s.width, s.height) for s in screens}
+        if per_screen and len(sizes) > 1:
+            for screen in screens:
+                composed_path = self._compose_path(track, screen.width, screen.height)
+                self.deps.platform.set_wallpaper(composed_path, screen_id=screen.screen_id)
+        else:
+            if screens:
+                best = max(screens, key=lambda s: s.width * s.height)
+                width, height = best.width, best.height
+            else:
+                width, height = self.deps.platform.get_primary_screen_size()
+            composed_path = self._compose_path(track, width, height)
+            self.deps.platform.set_wallpaper(composed_path)
         self._last_applied = key
         self._state.session_active = True
         self._state.save(self.deps.state_path)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 
-from now_playing_desktops.platforms.base import WallpaperPlatform
+from now_playing_desktops.platforms.base import ScreenInfo, WallpaperPlatform
 
 
 class UnsupportedPlatformError(RuntimeError):
@@ -21,13 +21,23 @@ def get_platform() -> WallpaperPlatform:
         from now_playing_desktops.platforms.macos import MacOSWallpaperPlatform
 
         return MacOSWallpaperPlatform()
+    if sys.platform == "linux":
+        from now_playing_desktops.platforms.linux import LinuxWallpaperPlatform
+
+        try:
+            return LinuxWallpaperPlatform()
+        except OSError as exc:
+            raise UnsupportedPlatformError(
+                "Linux wallpaper backend unavailable; install gsettings (GNOME), "
+                "plasma tools (KDE), or feh/swaybg/nitrogen."
+            ) from exc
     raise UnsupportedPlatformError(
-        f"Unsupported platform {sys.platform!r}; wallpaper control is only available on "
-        "Windows and macOS in this release."
+        f"Unsupported platform {sys.platform!r}; wallpaper control is not available."
     )
 
 
 __all__ = [
+    "ScreenInfo",
     "UnsupportedPlatformError",
     "WallpaperPlatform",
     "get_platform",
