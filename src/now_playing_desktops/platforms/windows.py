@@ -1,14 +1,17 @@
-"""Windows desktop wallpaper via SystemParametersInfo."""
+"""Windows desktop wallpaper via SystemParametersInfo and optional per-monitor COM."""
 
 from __future__ import annotations
 
 import ctypes
 import sys
 from pathlib import Path
+from typing import Any
+
+from now_playing_desktops.platforms.base import ScreenInfo
 
 if sys.platform == "win32":
     import winreg
-else:  # pragma: no cover - import guard for non-Windows CI
+else:  # pragma: no cover
     winreg = None  # type: ignore[assignment]
 
 SPI_GETDESKWALLPAPER = 0x0073
@@ -23,8 +26,20 @@ _MAX_WALLPAPER_CHARS = 260
 class WindowsWallpaperPlatform:
     """Windows implementation of :class:`~now_playing_desktops.platforms.base.WallpaperPlatform`."""
 
-    def set_wallpaper(self, image_path: Path) -> None:
+    def __init__(self) -> None:
+        if sys.platform == "win32":
+            from now_playing_desktops.platforms.windows_monitors import set_process_dpi_aware
+
+            set_process_dpi_aware()
+        from now_playing_desktops.platforms.windows_com import idesktop_wallpaper_available
+
+        self._per_monitor = sys.platform == "win32" and idesktop_wallpaper_available()
+
+    def set_wallpaper(self, image_path: Path, *, screen_id: str | None = None) -> None:
         path_str = str(image_path.resolve())
+        if screen_id is not None and self._per_monitor:
+            _set_wallpaper_on_monitor(path_str, screen_id)
+            return
         if not ctypes.windll.user32.SystemParametersInfoW(
             SPI_SETDESKWALLPAPER,
             0,
@@ -33,7 +48,11 @@ class WindowsWallpaperPlatform:
         ):
             raise OSError(f"SystemParametersInfoW failed for {path_str}")
 
-    def get_current_wallpaper(self) -> Path | None:
+    def get_current_wallpaper(self, *, screen_id: str | None = None) -> Path | None:
+        if screen_id is not None and self._per_monitor:
+            path = _get_wallpaper_for_monitor(screen_id)
+            if path:
+                return Path(path)
         buffer = ctypes.create_unicode_buffer(_MAX_WALLPAPER_CHARS)
         if not ctypes.windll.user32.SystemParametersInfoW(
             SPI_GETDESKWALLPAPER,
@@ -48,8 +67,64 @@ class WindowsWallpaperPlatform:
         return Path(path)
 
     def get_primary_screen_size(self) -> tuple[int, int]:
-        user32 = ctypes.windll.user32
-        return int(user32.GetSystemMetrics(SM_CXSCREEN)), int(user32.GetSystemMetrics(SM_CYSCREEN))
+        if sys.platform != "win32":
+            return 1920, 1080
+        from now_playing_desktops.platforms.windows_monitors import (
+            enumerate_monitors,
+            largest_monitor_pixel_size,
+        )
+
+        monitors = enumerate_monitors()
+        for monitor in monitors:
+            if monitor.is_primary:
+                return monitor.width, monitor.height
+        return largest_monitor_pixel_size(monitors)
+
+    def list_screens(self) -> list[ScreenInfo]:
+        if sys.platform != "win32":
+            return [ScreenInfo(screen_id="0", width=1920, height=1080, is_primary=True)]
+        from now_playing_desktops.platforms.windows_monitors import enumerate_monitors
+
+        return [
+            ScreenInfo(
+                screen_id=m.monitor_id,
+                width=m.width,
+                height=m.height,
+                is_primary=m.is_primary,
+            )
+            for m in enumerate_monitors()
+        ]
+
+    def supports_per_screen_wallpaper(self) -> bool:
+        return self._per_monitor
+
+    def capture_restore_snapshot(self) -> dict[str, Any]:
+        monitors: dict[str, str] = {}
+        if self._per_monitor:
+            for screen in self.list_screens():
+                current = self.get_current_wallpaper(screen_id=screen.screen_id)
+                if current:
+                    monitors[screen.screen_id] = str(current)
+        primary = self.get_current_wallpaper()
+        return {
+            "backend": "windows",
+            "path": str(primary) if primary else None,
+            "monitors": monitors,
+            "per_monitor": self._per_monitor,
+        }
+
+    def apply_restore_snapshot(self, snapshot: dict[str, Any]) -> None:
+        if snapshot.get("per_monitor") and snapshot.get("monitors"):
+            for monitor_id, raw in snapshot["monitors"].items():
+                path = Path(raw)
+                if path.is_file():
+                    self.set_wallpaper(path, screen_id=monitor_id)
+            return
+        raw = snapshot.get("path")
+        if raw:
+            path = Path(raw)
+            if path.is_file():
+                self.set_wallpaper(path)
 
 
 def _wallpaper_from_registry() -> Path | None:
@@ -66,6 +141,18 @@ def _wallpaper_from_registry() -> Path | None:
     if not value:
         return None
     return Path(str(value))
+
+
+def _set_wallpaper_on_monitor(path_str: str, monitor_id: str) -> None:
+    from now_playing_desktops.platforms.windows_com import set_wallpaper_for_monitor
+
+    set_wallpaper_for_monitor(monitor_id, path_str)
+
+
+def _get_wallpaper_for_monitor(monitor_id: str) -> str | None:
+    from now_playing_desktops.platforms.windows_com import get_wallpaper_for_monitor
+
+    return get_wallpaper_for_monitor(monitor_id)
 
 
 def set_desktop_wallpaper(image_path: Path) -> None:

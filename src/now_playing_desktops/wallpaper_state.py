@@ -12,6 +12,7 @@ from now_playing_desktops.config import state_file_path
 @dataclass
 class WallpaperSessionState:
     original_wallpaper_path: str | None = None
+    original_wallpaper_snapshot: dict | None = None
     session_active: bool = False
     generated_wallpaper_dir: str | None = None
 
@@ -24,8 +25,10 @@ class WallpaperSessionState:
             data = json.loads(file_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return cls()
+        snapshot = data.get("original_wallpaper_snapshot")
         return cls(
             original_wallpaper_path=data.get("original_wallpaper_path"),
+            original_wallpaper_snapshot=snapshot if isinstance(snapshot, dict) else None,
             session_active=bool(data.get("session_active")),
             generated_wallpaper_dir=data.get("generated_wallpaper_dir"),
         )
