@@ -16,6 +16,7 @@ from now_playing_desktops.platforms.linux_backends import (
     select_wm_fallback_backend,
 )
 from now_playing_desktops.platforms.linux_de import LinuxDesktopEnvironment
+from tests.helpers import make_test_cover
 
 
 def test_gnome_set_wallpaper_sets_both_uri_keys(tmp_path: Path):
@@ -182,7 +183,7 @@ def test_gnome_gsettings_integration_under_dbus(tmp_path: Path):
     if not shutil.which("gsettings") or not shutil.which("dbus-run-session"):
         pytest.skip("gsettings or dbus-run-session missing")
     image = tmp_path / "wall.png"
-    image.write_bytes(b"\x89PNG\r\n")
+    make_test_cover(64).save(image, format="PNG")
     uri = f"file://{image.resolve()}"
     backend = GnomeWallpaperBackend()
 
@@ -218,7 +219,7 @@ def test_feh_integration_under_xvfb(tmp_path: Path):
     if not shutil.which("feh") or not shutil.which("xvfb-run"):
         pytest.skip("feh or xvfb-run missing")
     image = tmp_path / "bg.png"
-    image.write_bytes(b"\x89PNG\r\n")
+    make_test_cover(64).save(image, format="PNG")
     backend = FehWallpaperBackend()
     subprocess.run(
         ["xvfb-run", "-a", "feh", "--bg-fill", str(image)],
