@@ -47,7 +47,7 @@ packages = ["now_playing_desktops"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
 
 [tool.ruff]
 target-version = "py312"

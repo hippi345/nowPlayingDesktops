@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from tests.conftest import make_test_cover
+from tests.helpers import make_test_cover
 from tests.helpers import FakePlatform, make_runner
 
 from now_playing_desktops.spotify_art import TrackPlayback
