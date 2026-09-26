@@ -1,4 +1,4 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from now_playing_desktops.auth import prompt_for_token
 
@@ -14,12 +14,8 @@ def test_prompt_for_token_uses_env(monkeypatch):
     monkeypatch.setenv("SPOTIPY_CLIENT_SECRET", "secret")
     monkeypatch.setenv("SPOTIPY_REDIRECT_URI", "http://localhost/")
 
-    with patch("now_playing_desktops.auth.util.prompt_for_user_token", return_value="tok") as mock:
+    manager = MagicMock()
+    manager.get_access_token.return_value = "tok"
+    with patch("now_playing_desktops.auth.spotify_oauth_manager", return_value=manager):
         assert prompt_for_token("user") == "tok"
-        mock.assert_called_once_with(
-            "user",
-            "user-read-currently-playing",
-            client_id="id",
-            client_secret="secret",
-            redirect_uri="http://localhost/",
-        )
+        manager.get_access_token.assert_called_once_with(as_dict=False)

@@ -6,14 +6,15 @@ import pytest
 from now_playing_desktops.spotify_art import (
     current_album_art_url,
     download_album_art,
+    fetch_current_playback,
     pick_album_image_url,
     poll_and_update_wallpaper,
 )
 
 
-def test_pick_album_image_url_prefers_medium():
+def test_pick_album_image_url_prefers_largest():
     images = [{"url": "large"}, {"url": "medium"}, {"url": "small"}]
-    assert pick_album_image_url(images) == "medium"
+    assert pick_album_image_url(images) == "large"
 
 
 def test_pick_album_image_url_single_image():
@@ -30,12 +31,34 @@ def test_current_album_art_url_when_nothing_playing():
     assert current_album_art_url(sp) is None
 
 
-def test_current_album_art_url_returns_medium_image():
+def test_current_album_art_url_returns_largest_image():
     sp = MagicMock()
     sp.current_user_playing_track.return_value = {
-        "item": {"album": {"images": [{"url": "a"}, {"url": "b"}]}},
+        "is_playing": True,
+        "item": {
+            "id": "abc",
+            "name": "Track",
+            "artists": [{"name": "Band"}],
+            "album": {"images": [{"url": "a"}, {"url": "b"}]},
+        },
     }
-    assert current_album_art_url(sp) == "b"
+    assert current_album_art_url(sp) == "a"
+
+
+def test_fetch_current_playback_respects_is_playing_flag():
+    sp = MagicMock()
+    sp.current_user_playing_track.return_value = {
+        "is_playing": False,
+        "item": {
+            "id": "abc",
+            "name": "Track",
+            "artists": [{"name": "Band"}],
+            "album": {"images": [{"url": "a"}]},
+        },
+    }
+    track = fetch_current_playback(sp)
+    assert track is not None
+    assert track.is_playing is False
 
 
 def test_download_album_art_writes_file(tmp_path: Path):
@@ -52,10 +75,16 @@ def test_download_album_art_writes_file(tmp_path: Path):
     session.get.assert_called_once_with("https://example.com/art.jpg", stream=True, timeout=30)
 
 
-def test_poll_and_update_wallpaper_invokes_callbacks(tmp_path: Path):
+def test_poll_and_update_wallpaper_invokes_callbacks_when_playing(tmp_path: Path):
     sp = MagicMock()
     sp.current_user_playing_track.return_value = {
-        "item": {"album": {"images": [{"url": "x"}]}},
+        "is_playing": True,
+        "item": {
+            "id": "x",
+            "name": "n",
+            "artists": [{"name": "a"}],
+            "album": {"images": [{"url": "x"}]},
+        },
     }
 
     paths: list[Path] = []

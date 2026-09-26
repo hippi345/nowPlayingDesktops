@@ -1,104 +1,160 @@
-"""Command-line entry points for macOS and Windows."""
+"""Command-line entry points."""
 
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
-import tempfile
-from collections.abc import Callable
-from datetime import datetime
 from pathlib import Path
 
-import spotipy
+from now_playing_desktops.auth import create_spotify_client
+from now_playing_desktops.config import (
+    DEFAULT_POLL_INTERVAL_SECONDS,
+    default_cache_dir,
+    state_file_path,
+)
+from now_playing_desktops.platforms import UnsupportedPlatformError, get_platform
+from now_playing_desktops.runner import NowPlayingRunner, RunnerDeps
 
-from now_playing_desktops.auth import prompt_for_token
-from now_playing_desktops.spotify_art import poll_and_update_wallpaper
 
-
-def _run_platform(
-    platform_name: str,
-    *,
-    poll_interval_seconds: float,
-    prepare_artwork: Callable[[str], Path],
-    set_wallpaper: Callable[[Path], None],
-    after_update: Callable[[Path], None] | None = None,
-) -> int:
-    parser = argparse.ArgumentParser(
-        description=f"Set desktop wallpaper from Spotify album art ({platform_name})."
+def _configure_logging(verbose: bool) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    parser.add_argument("username", help="Spotify username for OAuth")
-    args = parser.parse_args()
 
-    token = prompt_for_token(args.username)
-    if not token:
-        print("Can't get token for", args.username, file=sys.stderr)
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="now-playing-desktops",
+        description="Set your desktop wallpaper to the currently playing Spotify track.",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable debug logging.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    run_parser = subparsers.add_parser("run", help="Poll Spotify and update the wallpaper.")
+    run_parser.add_argument("username", help="Spotify username for OAuth")
+    run_parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=DEFAULT_POLL_INTERVAL_SECONDS,
+        help=f"Seconds between polls (default {DEFAULT_POLL_INTERVAL_SECONDS}).",
+    )
+    run_parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Perform a single poll/apply cycle and exit.",
+    )
+    run_parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=None,
+        help="Override the composed-art cache directory.",
+    )
+
+    restore_parser = subparsers.add_parser(
+        "restore",
+        help="Restore the wallpaper saved at startup.",
+    )
+    restore_parser.add_argument(
+        "--state-file",
+        type=Path,
+        default=None,
+        help="Override the session state file path.",
+    )
+    return parser
+
+
+def _run(args: argparse.Namespace) -> int:
+    try:
+        platform = get_platform()
+    except UnsupportedPlatformError as exc:
+        print(exc, file=sys.stderr)
         return 1
 
-    sp = spotipy.Spotify(auth=token)
+    client_bundle = create_spotify_client(args.username)
+    if client_bundle is None:
+        print("Can't get token for", args.username, file=sys.stderr)
+        return 1
+    sp, _manager, refresh = client_bundle
+
+    cache_dir = args.cache_dir or default_cache_dir()
+    runner = NowPlayingRunner(
+        RunnerDeps(
+            platform=platform,
+            sp=sp,
+            cache_dir=cache_dir,
+            state_path=state_file_path(),
+            poll_interval_seconds=args.poll_interval,
+            on_token_refresh=refresh,
+        )
+    )
 
     try:
-        poll_and_update_wallpaper(
-            sp,
-            poll_interval_seconds=poll_interval_seconds,
-            prepare_artwork=prepare_artwork,
-            set_wallpaper=set_wallpaper,
-            after_update=after_update,
-        )
+        if args.once:
+            runner.startup()
+            runner.apply_playback_once()
+            return 0
+        runner.run_forever()
     except KeyboardInterrupt:
+        runner.restore_original_wallpaper()
         return 0
     return 0
 
 
-def main_macos() -> None:
-    from now_playing_desktops.platforms.macos import set_desktop_wallpaper
+def _restore(args: argparse.Namespace) -> int:
+    try:
+        platform = get_platform()
+    except UnsupportedPlatformError as exc:
+        print(exc, file=sys.stderr)
+        return 1
 
-    cache_dir = Path(tempfile.gettempdir()) / "nowPlayingDesktops"
-
-    def prepare_artwork(_url: str) -> Path:
-        return cache_dir / f"current_artwork{datetime.now()}.jpg"
-
-    def after_update(path: Path) -> None:
-        import time
-
-        time.sleep(2)
-        path.unlink(missing_ok=True)
-
-    raise SystemExit(
-        _run_platform(
-            "macOS",
-            poll_interval_seconds=1.0,
-            prepare_artwork=prepare_artwork,
-            set_wallpaper=set_desktop_wallpaper,
-            after_update=after_update,
+    runner = NowPlayingRunner(
+        RunnerDeps(
+            platform=platform,
+            sp=object(),
+            cache_dir=default_cache_dir(),
+            state_path=args.state_file or state_file_path(),
+            poll_interval_seconds=DEFAULT_POLL_INTERVAL_SECONDS,
         )
     )
+    return 0 if runner.restore_original_wallpaper() else 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    _configure_logging(args.verbose)
+    if args.command == "run":
+        return _run(args)
+    if args.command == "restore":
+        return _restore(args)
+    parser.error(f"Unknown command {args.command!r}")
+    return 2
+
+
+def _legacy_argv() -> list[str]:
+    argv = sys.argv[1:]
+    if argv and argv[0] not in {"run", "restore"}:
+        return ["run", *argv]
+    return argv
+
+
+def main_macos() -> None:
+    """Legacy console script entry point."""
+    raise SystemExit(main(_legacy_argv()))
 
 
 def main_windows() -> None:
-    from now_playing_desktops.platforms.windows import set_desktop_wallpaper
-
-    cache_dir = Path(tempfile.gettempdir()) / "nowPlayingDesktops"
-    artwork_path = cache_dir / "current_artwork.jpg"
-
-    def prepare_artwork(_url: str) -> Path:
-        return artwork_path
-
-    def after_update(_path: Path) -> None:
-        import time
-
-        time.sleep(0.5)
-
-    raise SystemExit(
-        _run_platform(
-            "Windows",
-            poll_interval_seconds=0.5,
-            prepare_artwork=prepare_artwork,
-            set_wallpaper=set_desktop_wallpaper,
-            after_update=after_update,
-        )
-    )
+    """Legacy console script entry point."""
+    raise SystemExit(main(_legacy_argv()))
 
 
 if __name__ == "__main__":
-    print("Use the now-playing-macos or now-playing-windows commands.", file=sys.stderr)
-    raise SystemExit(2)
+    raise SystemExit(main())

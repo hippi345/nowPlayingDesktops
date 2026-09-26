@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+    "pillow>=11.0.0,<12",
     "requests>=2.32.0,<3",
     "spotipy>=2.24.0,<3",
 ]
@@ -34,6 +35,7 @@ dev = [
 ]
 
 [project.scripts]
+now-playing = "now_playing_desktops.cli:main"
 now-playing-macos = "now_playing_desktops.cli:main_macos"
 now-playing-windows = "now_playing_desktops.cli:main_windows"
 
