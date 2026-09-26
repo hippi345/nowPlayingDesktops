@@ -3,11 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from tests.helpers import make_test_cover
-from tests.helpers import FakePlatform, make_runner
-
 from now_playing_desktops.spotify_art import TrackPlayback
 from now_playing_desktops.wallpaper_state import WallpaperSessionState
+from tests.helpers import FakePlatform, make_runner, make_test_cover
 
 PLAYING = TrackPlayback(
     track_id="t1",

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 from PIL import Image
-from tests.helpers import ARTIFACTS_DIR, image_variance, make_test_cover
 
 from now_playing_desktops.composer import compose_wallpaper, save_wallpaper
+from tests.helpers import ARTIFACTS_DIR, image_variance, make_test_cover
 
 LONG_TITLE = (
     "This Is An Extremely Long Track Title That Should Be Ellipsized "
