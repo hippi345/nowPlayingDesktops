@@ -3,14 +3,46 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 from now_playing_desktops.runner import NowPlayingRunner, RunnerDeps
 
 ARTIFACTS_DIR = Path("/opt/cursor/artifacts")
 
 
-def make_test_cover(size: int = 640) -> Image.Image:
+def make_sample_cover(size: int = 640) -> Image.Image:
+    """Colorful synthetic album art for sample PNG previews."""
+    image = Image.new("RGB", (size, size))
+    draw = ImageDraw.Draw(image)
+    for y in range(size):
+        for x in range(size):
+            red = int(40 + (x / size) * 200)
+            green = int(30 + (y / size) * 160)
+            blue = int(120 + ((x + y) / (2 * size)) * 120)
+            image.putpixel((x, y), (red % 256, green % 256, min(blue, 255)))
+    draw.ellipse((40, 50, size - 60, size - 80), fill=(255, 210, 60))
+    draw.rectangle(
+        (size // 4, size // 3, size * 3 // 4, size * 2 // 3),
+        outline=(255, 255, 255),
+        width=6,
+    )
+    draw.polygon(
+        [
+            (size // 2, size // 5),
+            (size * 4 // 5, size * 3 // 5),
+            (size // 5, size * 3 // 5),
+        ],
+        fill=(220, 60, 140),
+    )
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", size=size // 3)
+    except OSError:
+        font = ImageFont.load_default()
+    draw.text((size // 2, size // 2), "N", font=font, fill=(255, 255, 255), anchor="mm")
+    return image
+
+
+def make_sharp_test_cover(size: int = 640) -> Image.Image:
     """Album cover with a high-contrast checkerboard center for sharpness checks."""
     image = Image.new("RGB", (size, size), (25, 30, 90))
     draw = ImageDraw.Draw(image)
@@ -21,6 +53,11 @@ def make_test_cover(size: int = 640) -> Image.Image:
             color = (240, 40, 40) if ((x // 16) + (y // 16)) % 2 == 0 else (40, 240, 40)
             draw.point((x, y), fill=color)
     return image
+
+
+def make_test_cover(size: int = 640) -> Image.Image:
+    """Alias for the high-frequency cover used in sharpness assertions."""
+    return make_sharp_test_cover(size)
 
 
 def image_variance(image: Image.Image, box: tuple[int, int, int, int]) -> float:
