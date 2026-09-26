@@ -9,11 +9,47 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from now_playing_desktops.config import FOREGROUND_HEIGHT_RATIO, MAX_COVER_UPSCALE
 
+# --- Typography ---
 TITLE_HEIGHT_RATIO = 0.024
 ARTIST_HEIGHT_RATIO = 0.017
 TEXT_WIDTH_COVER_FACTOR = 1.6
 TEXT_WIDTH_SCREEN_FACTOR = 0.8
 ELLIPSIS = "…"
+TEXT_SHADOW_OFFSET_Y = 3
+TEXT_SHADOW_ALPHA = 210
+TEXT_STROKE_WIDTH = 1
+
+# --- Backdrop ---
+BACKDROP_BLUR_MIN_PX = 36
+BACKDROP_BLUR_SCREEN_DIVISOR = 14
+BACKDROP_DARKEN_BLEND = 0.52
+BACKDROP_BRIGHTNESS = 1.0 - BACKDROP_DARKEN_BLEND
+
+# --- Vignette ---
+VIGNETTE_STRENGTH = 0.58
+VIGNETTE_POWER = 1.6
+VIGNETTE_MASK_SIZE = 256
+
+# --- Cover frame ---
+COVER_CORNER_RADIUS_DIVISOR = 30
+RIM_HIGHLIGHT_WIDTH_1080P = 2
+RIM_HIGHLIGHT_ALPHA = 150
+RIM_HIGHLIGHT_SCREEN_HEIGHT_REF = 1080
+
+# --- Layered cover shadow (contact + ambient) ---
+COVER_SHADOW_CONTACT_OFFSET_Y_FRAC = 0.016
+COVER_SHADOW_CONTACT_BLUR_FRAC = 0.05
+COVER_SHADOW_CONTACT_ALPHA = 230
+COVER_SHADOW_AMBIENT_OFFSET_Y_FRAC = 0.065
+COVER_SHADOW_AMBIENT_BLUR_FRAC = 0.2
+COVER_SHADOW_AMBIENT_ALPHA = 200
+COVER_SHADOW_AMBIENT_PAD_FRAC = 0.24
+
+# --- Dominant-color glow behind cover ---
+GLOW_BLUR_FRAC = 0.22
+GLOW_ALPHA = 42
+GLOW_SCALE_FRAC = 1.12
+GLOW_UPWARD_BIAS_FRAC = 0.06
 
 _FONT_CANDIDATES = (
     "DejaVuSans.ttf",
@@ -30,6 +66,15 @@ class TextLayout:
     title_font_size: int
     artist_font_size: int
     max_width: int
+
+
+@dataclass(frozen=True)
+class CoverPlacement:
+    x: int
+    y: int
+    width: int
+    height: int
+    corner_radius: int
 
 
 def load_wallpaper_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -105,6 +150,10 @@ def compute_text_layout(
     )
 
 
+def backdrop_blur_radius(width: int, height: int) -> float:
+    return max(BACKDROP_BLUR_MIN_PX, min(width, height) / BACKDROP_BLUR_SCREEN_DIVISOR)
+
+
 def scale_cover_to_fill(cover: Image.Image, width: int, height: int) -> Image.Image:
     """Scale ``cover`` with cover-fit (max scale) and center-crop to ``width`` x ``height``."""
     scale = max(width / cover.width, height / cover.height)
@@ -116,19 +165,90 @@ def scale_cover_to_fill(cover: Image.Image, width: int, height: int) -> Image.Im
     return resized.crop((left, top, left + width, top + height))
 
 
+def _vignette_mask(width: int, height: int) -> Image.Image:
+    small_h = max(1, int(VIGNETTE_MASK_SIZE * height / width))
+    mask = Image.new("L", (VIGNETTE_MASK_SIZE, small_h))
+    cx = VIGNETTE_MASK_SIZE / 2
+    cy = small_h / 2
+    pixels = mask.load()
+    for y in range(small_h):
+        for x in range(VIGNETTE_MASK_SIZE):
+            nx = (x - cx) / cx
+            ny = (y - cy) / cy if cy else 0
+            r = min(1.0, (nx * nx + ny * ny) ** 0.5)
+            strength = r**VIGNETTE_POWER
+            pixels[x, y] = max(0, min(255, int(255 * (1 - VIGNETTE_STRENGTH * strength))))
+    return mask.resize((width, height), Image.Resampling.BILINEAR)
+
+
+def apply_vignette(image: Image.Image) -> Image.Image:
+    mask = _vignette_mask(*image.size)
+    dark = Image.new("RGB", image.size, (0, 0, 0))
+    return Image.composite(image, dark, mask)
+
+
+def render_backdrop(cover: Image.Image, width: int, height: int) -> Image.Image:
+    """Blur, darken, and vignette the fill-scaled cover (no foreground)."""
+    backdrop = scale_cover_to_fill(cover.convert("RGB"), width, height)
+    backdrop = backdrop.filter(ImageFilter.GaussianBlur(radius=backdrop_blur_radius(width, height)))
+    darken = Image.new("RGB", (width, height), (0, 0, 0))
+    backdrop = Image.blend(backdrop, darken, alpha=BACKDROP_DARKEN_BLEND)
+    return apply_vignette(backdrop)
+
+
+def extract_dominant_glow_color(cover: Image.Image) -> tuple[int, int, int]:
+    """Pick a vivid average color from the cover for the rear glow tint."""
+    small = cover.convert("RGB").resize((64, 64))
+    best_color = (160, 120, 200)
+    best_score = -1.0
+    for r, g, b in small.getdata():
+        mx = max(r, g, b)
+        mn = min(r, g, b)
+        if mx < 32:
+            continue
+        saturation = mx - mn
+        vivid = saturation * (mx / 255.0)
+        if vivid > best_score:
+            best_score = vivid
+            best_color = (r, g, b)
+    return best_color
+
+
+def mean_luminance(image: Image.Image, box: tuple[int, int, int, int]) -> float:
+    crop = image.crop(box)
+    total = 0.0
+    pixels = list(crop.getdata())
+    if not pixels:
+        return 0.0
+    for r, g, b in pixels:
+        total += 0.2126 * r + 0.7152 * g + 0.0722 * b
+    return total / len(pixels)
+
+
+def relative_luminance(rgb: tuple[int, int, int]) -> float:
+    def channel(value: int) -> float:
+        c = value / 255.0
+        if c <= 0.03928:
+            return c / 12.92
+        return ((c + 0.055) / 1.055) ** 2.4
+
+    r, g, b = rgb
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+
+def contrast_ratio(foreground: tuple[int, int, int], background: tuple[int, int, int]) -> float:
+    l1 = relative_luminance(foreground)
+    l2 = relative_luminance(background)
+    lighter = max(l1, l2)
+    darker = min(l1, l2)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
 def _rounded_rectangle_mask(size: tuple[int, int], radius: int) -> Image.Image:
     mask = Image.new("L", size, 0)
     draw = ImageDraw.Draw(mask)
     draw.rounded_rectangle((0, 0, size[0], size[1]), radius=radius, fill=255)
     return mask
-
-
-def _build_backdrop(cover: Image.Image, width: int, height: int) -> Image.Image:
-    backdrop = scale_cover_to_fill(cover.convert("RGB"), width, height)
-    blur_radius = max(24, min(width, height) // 40)
-    backdrop = backdrop.filter(ImageFilter.GaussianBlur(radius=blur_radius))
-    darken = Image.new("RGB", (width, height), (0, 0, 0))
-    return Image.blend(backdrop, darken, alpha=0.45)
 
 
 def _foreground_cover(cover: Image.Image, width: int, height: int) -> Image.Image:
@@ -146,6 +266,144 @@ def _foreground_cover(cover: Image.Image, width: int, height: int) -> Image.Imag
     return cover.copy()
 
 
+def _cover_placement(
+    foreground: Image.Image,
+    width: int,
+    height: int,
+    screen_height: int,
+) -> CoverPlacement:
+    corner_radius = max(12, min(foreground.width, foreground.height) // COVER_CORNER_RADIUS_DIVISOR)
+    title_font = _load_font(title_font_size_for_height(screen_height))
+    artist_font = _load_font(artist_font_size_for_height(screen_height))
+    title_h = title_font.getbbox("Ag")[3] - title_font.getbbox("Ag")[1]
+    artist_h = artist_font.getbbox("Ag")[3] - artist_font.getbbox("Ag")[1]
+    text_block_height = title_h + artist_h + height // 40
+    total_height = foreground.height + text_block_height + height // 16
+    top_y = (height - total_height) // 2
+    fg_x = (width - foreground.width) // 2
+    return CoverPlacement(
+        x=fg_x,
+        y=top_y,
+        width=foreground.width,
+        height=foreground.height,
+        corner_radius=corner_radius,
+    )
+
+
+def _build_glow_layer(
+    color: tuple[int, int, int],
+    placement: CoverPlacement,
+    canvas_size: tuple[int, int],
+) -> Image.Image:
+    glow_w = int(placement.width * GLOW_SCALE_FRAC)
+    glow_h = int(placement.height * GLOW_SCALE_FRAC)
+    blur = max(12, int(placement.height * GLOW_BLUR_FRAC))
+    glow = Image.new("RGBA", (glow_w, glow_h), (*color, GLOW_ALPHA))
+    glow = glow.filter(ImageFilter.GaussianBlur(radius=blur))
+    layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+    gx = placement.x + (placement.width - glow_w) // 2
+    upward = int(placement.height * GLOW_UPWARD_BIAS_FRAC)
+    gy = placement.y + (placement.height - glow_h) // 2 - upward
+    layer.paste(glow, (gx, gy), glow)
+    return layer
+
+
+def _build_layered_shadow_layer(
+    placement: CoverPlacement,
+    canvas_size: tuple[int, int],
+) -> Image.Image:
+    mask = _rounded_rectangle_mask((placement.width, placement.height), placement.corner_radius)
+    layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+
+    contact_blur = max(4, int(placement.height * COVER_SHADOW_CONTACT_BLUR_FRAC))
+    contact_offset_y = max(2, int(placement.height * COVER_SHADOW_CONTACT_OFFSET_Y_FRAC))
+    contact_size = (placement.width, placement.height)
+    contact = Image.new("RGBA", contact_size, (0, 0, 0, COVER_SHADOW_CONTACT_ALPHA))
+    contact = contact.filter(ImageFilter.GaussianBlur(radius=contact_blur))
+    layer.paste(contact, (placement.x, placement.y + contact_offset_y), mask)
+
+    pad = int(placement.height * COVER_SHADOW_AMBIENT_PAD_FRAC)
+    ambient_w = placement.width + pad * 2
+    ambient_h = placement.height + pad * 2
+    ambient_blur = max(8, int(placement.height * COVER_SHADOW_AMBIENT_BLUR_FRAC))
+    ambient_offset_y = max(4, int(placement.height * COVER_SHADOW_AMBIENT_OFFSET_Y_FRAC))
+    ambient_radius = placement.corner_radius + pad // 3
+    ambient_mask = _rounded_rectangle_mask((ambient_w, ambient_h), ambient_radius)
+    ambient = Image.new("RGBA", (ambient_w, ambient_h), (0, 0, 0, COVER_SHADOW_AMBIENT_ALPHA))
+    ambient = ambient.filter(ImageFilter.GaussianBlur(radius=ambient_blur))
+    layer.paste(
+        ambient,
+        (placement.x - pad, placement.y - pad // 2 + ambient_offset_y),
+        ambient_mask,
+    )
+    return layer
+
+
+def _rim_highlight_width(screen_height: int) -> int:
+    scale = screen_height / RIM_HIGHLIGHT_SCREEN_HEIGHT_REF
+    return max(1, round(RIM_HIGHLIGHT_WIDTH_1080P * scale))
+
+
+def _draw_rim_highlight(
+    canvas: Image.Image,
+    placement: CoverPlacement,
+    screen_height: int,
+) -> Image.Image:
+    layer = canvas.convert("RGBA")
+    draw = ImageDraw.Draw(layer)
+    inset = _rim_highlight_width(screen_height) // 2
+    draw.rounded_rectangle(
+        (
+            placement.x + inset,
+            placement.y + inset,
+            placement.x + placement.width - inset - 1,
+            placement.y + placement.height - inset - 1,
+        ),
+        radius=max(1, placement.corner_radius - inset),
+        outline=(255, 255, 255, RIM_HIGHLIGHT_ALPHA),
+        width=_rim_highlight_width(screen_height),
+    )
+    return layer
+
+
+def _draw_text_with_shadow(
+    canvas: Image.Image,
+    *,
+    xy: tuple[int, int],
+    text: str,
+    font: ImageFont.ImageFont,
+    fill: tuple[int, int, int],
+) -> Image.Image:
+    layer = canvas.convert("RGBA")
+    draw = ImageDraw.Draw(layer)
+    x, y = xy
+    shadow_y = y + TEXT_SHADOW_OFFSET_Y
+    draw.text(
+        (x, shadow_y),
+        text,
+        font=font,
+        fill=(0, 0, 0, TEXT_SHADOW_ALPHA),
+        anchor="mt",
+        stroke_width=TEXT_STROKE_WIDTH,
+        stroke_fill=(0, 0, 0, TEXT_SHADOW_ALPHA),
+    )
+    draw.text(
+        (x, y),
+        text,
+        font=font,
+        fill=fill,
+        anchor="mt",
+        stroke_width=TEXT_STROKE_WIDTH,
+        stroke_fill=(0, 0, 0, 140),
+    )
+    return layer
+
+
+def compute_cover_placement(cover: Image.Image, width: int, height: int) -> CoverPlacement:
+    foreground = _foreground_cover(cover.convert("RGBA"), width, height)
+    return _cover_placement(foreground, width, height, height)
+
+
 def compose_wallpaper(
     cover: Image.Image,
     *,
@@ -155,8 +413,9 @@ def compose_wallpaper(
     height: int,
 ) -> Image.Image:
     """Build a wallpaper image at ``width`` x ``height``."""
-    canvas = _build_backdrop(cover, width, height)
+    canvas = render_backdrop(cover, width, height).convert("RGBA")
     foreground = _foreground_cover(cover.convert("RGBA"), width, height)
+    placement = _cover_placement(foreground, width, height, height)
     layout = compute_text_layout(
         title=title,
         artist=artist,
@@ -166,47 +425,39 @@ def compose_wallpaper(
     )
     title_font = _load_font(layout.title_font_size)
     artist_font = _load_font(layout.artist_font_size)
-    title_text = layout.title
-    artist_text = layout.artist
+    mask = _rounded_rectangle_mask(foreground.size, placement.corner_radius)
 
-    corner_radius = max(12, min(foreground.width, foreground.height) // 30)
-    mask = _rounded_rectangle_mask(foreground.size, corner_radius)
-    shadow_offset = max(6, min(width, height) // 200)
-    shadow_blur = max(10, min(width, height) // 120)
-    shadow = Image.new("RGBA", foreground.size, (0, 0, 0, 180))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(radius=shadow_blur))
-
-    title_bbox = title_font.getbbox(title_text)
-    artist_bbox = artist_font.getbbox(artist_text)
-    title_h = title_bbox[3] - title_bbox[1]
-    artist_h = artist_bbox[3] - artist_bbox[1]
-    text_block_height = title_h + artist_h + height // 40
-    total_height = foreground.height + text_block_height + height // 16
-    top_y = (height - total_height) // 2
-    fg_x = (width - foreground.width) // 2
-    fg_y = top_y
-
-    shadow_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    shadow_layer.paste(
-        shadow,
-        (fg_x + shadow_offset, fg_y + shadow_offset),
-        mask,
+    glow_color = extract_dominant_glow_color(cover)
+    canvas = Image.alpha_composite(
+        canvas,
+        _build_glow_layer(glow_color, placement, (width, height)),
     )
-    canvas = Image.alpha_composite(canvas.convert("RGBA"), shadow_layer)
+    canvas = Image.alpha_composite(
+        canvas,
+        _build_layered_shadow_layer(placement, (width, height)),
+    )
 
     fg_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    fg_layer.paste(foreground, (fg_x, fg_y), mask)
+    fg_layer.paste(foreground, (placement.x, placement.y), mask)
     canvas = Image.alpha_composite(canvas, fg_layer)
+    canvas = _draw_rim_highlight(canvas, placement, height)
 
-    draw = ImageDraw.Draw(canvas)
-    text_y = fg_y + foreground.height + height // 32
-    draw.text((width // 2, text_y), title_text, font=title_font, fill="white", anchor="mt")
-    draw.text(
-        (width // 2, text_y + title_h + height // 80),
-        artist_text,
+    title_bbox = title_font.getbbox(layout.title)
+    title_h = title_bbox[3] - title_bbox[1]
+    text_y = placement.y + placement.height + height // 32
+    canvas = _draw_text_with_shadow(
+        canvas,
+        xy=(width // 2, text_y),
+        text=layout.title,
+        font=title_font,
+        fill=(255, 255, 255),
+    )
+    canvas = _draw_text_with_shadow(
+        canvas,
+        xy=(width // 2, text_y + title_h + height // 80),
+        text=layout.artist,
         font=artist_font,
         fill=(230, 230, 230),
-        anchor="mt",
     )
     return canvas.convert("RGB")
 

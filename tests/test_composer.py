@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import pytest
-from PIL import Image, ImageFilter
+from PIL import Image, ImageDraw
 
 from now_playing_desktops.composer import (
+    backdrop_blur_radius,
     compose_wallpaper,
+    compute_cover_placement,
     compute_text_layout,
+    contrast_ratio,
+    extract_dominant_glow_color,
     load_wallpaper_font,
     max_text_width,
+    mean_luminance,
+    render_backdrop,
     save_wallpaper,
     scale_cover_to_fill,
     title_font_size_for_height,
@@ -33,22 +39,14 @@ RESOLUTIONS = {
 }
 
 
-def _expected_blended_edge_color(
+def _expected_backdrop_edge_color(
     cover: Image.Image,
     width: int,
     height: int,
     x: int,
     y: int,
 ) -> tuple[int, int, int]:
-    filled = scale_cover_to_fill(cover, width, height)
-    blur_radius = max(24, min(width, height) // 40)
-    blurred = filled.filter(ImageFilter.GaussianBlur(radius=blur_radius))
-    r, g, b = blurred.getpixel((x, y))
-    return (
-        int(r * 0.55),
-        int(g * 0.55),
-        int(b * 0.55),
-    )
+    return render_backdrop(cover, width, height).getpixel((x, y))
 
 
 def _assert_edge_pixels_from_art(cover: Image.Image, composed: Image.Image) -> None:
@@ -62,9 +60,176 @@ def _assert_edge_pixels_from_art(cover: Image.Image, composed: Image.Image) -> N
     flat_fill = (0, 0, 0)
     for x, y in edge_points:
         actual = composed.getpixel((x, y))
-        expected = _expected_blended_edge_color(cover, width, height, x, y)
+        expected = _expected_backdrop_edge_color(cover, width, height, x, y)
         assert actual != flat_fill
-        assert sum(abs(actual[i] - expected[i]) for i in range(3)) < 45
+        assert sum(abs(actual[i] - expected[i]) for i in range(3)) < 55
+
+
+def test_backdrop_blur_radius_scales_with_screen_size():
+    blur_1080 = backdrop_blur_radius(1920, 1080)
+    blur_4k = backdrop_blur_radius(3840, 2160)
+    assert blur_4k > blur_1080
+    assert abs(blur_4k / blur_1080 - 2.0) < 0.15
+
+
+def test_backdrop_heavy_blur_obscures_cover_detail():
+    cover = make_sharp_test_cover()
+    width, height = 1920, 1080
+    sharp = scale_cover_to_fill(cover, width, height)
+    blurred = render_backdrop(cover, width, height)
+    sharp_var = image_variance(sharp, (200, 200, 600, 600))
+    blurred_var = image_variance(blurred, (200, 200, 600, 600))
+    assert blurred_var < sharp_var * 0.35
+
+
+def test_radial_vignette_corners_darker_than_center():
+    cover = make_sample_cover()
+    backdrop = render_backdrop(cover, 1920, 1080)
+    center_lum = mean_luminance(backdrop, (860, 440, 1060, 640))
+    corner_lum = mean_luminance(backdrop, (0, 0, 120, 120))
+    assert corner_lum < center_lum - 12
+
+
+def test_cover_shadow_darker_below_than_above():
+    cover = make_sample_cover()
+    composed = compose_wallpaper(
+        cover,
+        title=SHORT_TITLE,
+        artist="Artist",
+        width=1920,
+        height=1080,
+    )
+    placement = compute_cover_placement(cover, 1920, 1080)
+    cx = placement.x + placement.width // 2
+    above = mean_luminance(
+        composed,
+        (cx - 3, placement.y - 22, cx + 3, placement.y - 8),
+    )
+    below = mean_luminance(
+        composed,
+        (
+            cx - 3,
+            placement.y + placement.height + 8,
+            cx + 3,
+            placement.y + placement.height + 22,
+        ),
+    )
+    backdrop = render_backdrop(cover, 1920, 1080)
+    above_box = (cx - 3, placement.y - 22, cx + 3, placement.y - 8)
+    below_box = (
+        cx - 3,
+        placement.y + placement.height + 8,
+        cx + 3,
+        placement.y + placement.height + 22,
+    )
+    above_backdrop = mean_luminance(backdrop, above_box)
+    below_backdrop = mean_luminance(backdrop, below_box)
+    assert below < below_backdrop - 2
+    below_delta = below - below_backdrop
+    above_delta = above - above_backdrop
+    assert below_delta < 0
+    assert below_delta < above_delta - 2
+
+
+def test_cover_shadow_extends_beyond_cover_edges():
+    cover = make_sample_cover()
+    composed = compose_wallpaper(
+        cover,
+        title=SHORT_TITLE,
+        artist="Artist",
+        width=1920,
+        height=1080,
+    )
+    placement = compute_cover_placement(cover, 1920, 1080)
+    mid_y = placement.y + placement.height // 2
+    outside = mean_luminance(
+        composed,
+        (placement.x - 28, mid_y - 4, placement.x - 6, mid_y + 4),
+    )
+    backdrop_only = mean_luminance(
+        render_backdrop(cover, 1920, 1080),
+        (placement.x - 28, mid_y - 4, placement.x - 6, mid_y + 4),
+    )
+    assert outside < backdrop_only - 2
+
+
+def test_cover_rim_highlight_brighter_than_adjacent_backdrop():
+    cover = make_sample_cover()
+    composed = compose_wallpaper(
+        cover,
+        title=SHORT_TITLE,
+        artist="Artist",
+        width=1920,
+        height=1080,
+    )
+    placement = compute_cover_placement(cover, 1920, 1080)
+    rim_lum = mean_luminance(
+        composed,
+        (placement.x + 6, placement.y + 6, placement.x + 18, placement.y + 18),
+    )
+    adjacent = mean_luminance(
+        composed,
+        (placement.x - 24, placement.y + 12, placement.x - 6, placement.y + 30),
+    )
+    assert rim_lum > adjacent + 8
+
+
+def test_extract_dominant_glow_color_prefers_vivid_red():
+    cover = Image.new("RGB", (64, 64), (20, 20, 20))
+    draw = ImageDraw.Draw(cover)
+    draw.rectangle((10, 10, 54, 54), fill=(230, 40, 40))
+    color = extract_dominant_glow_color(cover)
+    assert color[0] > color[1] + 40
+    assert color[0] > color[2] + 40
+
+
+def test_glow_tint_present_near_cover_edges():
+    cover = make_sample_cover()
+    composed = compose_wallpaper(
+        cover,
+        title=SHORT_TITLE,
+        artist="Artist",
+        width=1920,
+        height=1080,
+    )
+    glow_color = extract_dominant_glow_color(cover)
+    placement = compute_cover_placement(cover, 1920, 1080)
+    near = composed.getpixel((placement.x - 8, placement.y + placement.height // 2))
+    far = composed.getpixel((40, 40))
+    near_tint = sum(abs(near[i] - glow_color[i]) for i in range(3))
+    far_tint = sum(abs(far[i] - glow_color[i]) for i in range(3))
+    assert near_tint < far_tint
+
+
+def test_title_text_contrast_against_local_backdrop():
+    cover = make_sample_cover()
+    width, height = 1920, 1080
+    composed = compose_wallpaper(
+        cover,
+        title=LONG_TITLE,
+        artist="Test Artist",
+        width=width,
+        height=height,
+    )
+    placement = compute_cover_placement(cover, width, height)
+    text_y = placement.y + placement.height + height // 32
+    band = composed.crop((width // 2 - 350, text_y, width // 2 + 350, text_y + 48))
+    bright_pixels = [rgb for rgb in band.getdata() if min(rgb) >= 200]
+    assert bright_pixels, "expected bright title pixels in text band"
+    text_pixel = max(bright_pixels, key=sum)
+    backdrop = render_backdrop(cover, width, height)
+    bx = width // 2
+    by = text_y + 8
+    for y in range(text_y, text_y + 48):
+        for x in range(width // 2 - 350, width // 2 + 350):
+            if composed.getpixel((x, y)) == text_pixel:
+                bx, by = x, y
+                break
+        else:
+            continue
+        break
+    backdrop_pixel = backdrop.getpixel((bx, by))
+    assert contrast_ratio(text_pixel, backdrop_pixel) >= 4.5
 
 
 @pytest.mark.parametrize(
