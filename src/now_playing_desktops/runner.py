@@ -18,11 +18,11 @@ from pathlib import Path
 import requests
 
 from now_playing_desktops.apply_timing import ApplyTiming
-from now_playing_desktops.config import online_art_enabled
 from now_playing_desktops.art_background_upgrade import BackgroundArtUpgrader
 from now_playing_desktops.art_cache import ComposedArtCache
 from now_playing_desktops.compose_verify import schedule_compose_quality_verification
 from now_playing_desktops.composer import compose_wallpaper, save_wallpaper
+from now_playing_desktops.config import online_art_enabled
 from now_playing_desktops.cover_art import load_track_cover
 from now_playing_desktops.platforms.base import WallpaperPlatform
 from now_playing_desktops.playback_types import TrackPlayback
