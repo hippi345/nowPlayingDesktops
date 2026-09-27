@@ -225,6 +225,11 @@ def _read_desktop_style() -> dict[str, str]:
     }
 
 
+def read_applied_wallpaper_style() -> dict[str, str]:
+    """Public wrapper for tests and desktop verification."""
+    return _read_desktop_style()
+
+
 def _read_background_type() -> int:
     if winreg is None:
         return BACKGROUND_PICTURE

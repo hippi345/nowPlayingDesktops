@@ -201,7 +201,8 @@ class NowPlayingRunner:
         self._download_dir.mkdir(parents=True, exist_ok=True)
         download_path = self._download_dir / f"{track.track_id}.jpg"
         download_album_art(track.art_url, download_path, session=self.deps.session)
-        with Image.open(download_path) as cover:
+        with Image.open(download_path) as cover_image:
+            cover = cover_image.convert("RGBA")
             composed = compose_wallpaper(
                 cover,
                 title=track.title,
@@ -218,7 +219,44 @@ class NowPlayingRunner:
                 f"does not match target {width}x{height}",
             )
         save_wallpaper(composed, tmp)
+        self._validate_composed_wallpaper(
+            composed,
+            cover=cover,
+            title=track.title,
+            artist=track.artist,
+            width=width,
+            height=height,
+        )
         return self._composed_cache.put(track.track_id, track.art_url, width, height, tmp)
+
+    def _validate_composed_wallpaper(
+        self,
+        composed: Image.Image,
+        *,
+        cover: Image.Image,
+        title: str,
+        artist: str,
+        width: int,
+        height: int,
+    ) -> None:
+        from now_playing_desktops.composer import plan_wallpaper_layout, render_backdrop
+        from now_playing_desktops.verification.wallpaper_analysis import (
+            assert_glass_panel_present,
+            assert_no_backdrop_band_edges,
+            assert_title_text_present,
+        )
+
+        layout = plan_wallpaper_layout(
+            cover,
+            title=title,
+            artist=artist,
+            width=width,
+            height=height,
+        )
+        backdrop = render_backdrop(cover, width, height)
+        assert_glass_panel_present(composed, layout, backdrop, require_uniformity=False)
+        assert_title_text_present(composed, layout)
+        assert_no_backdrop_band_edges(composed, cover, layout=layout)
 
     def _log_render_error_once(self, track_id: str, exc: BaseException) -> None:
         if track_id in self._render_errors_logged:

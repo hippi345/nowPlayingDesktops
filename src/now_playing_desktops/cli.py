@@ -12,6 +12,7 @@ from now_playing_desktops.config import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     default_cache_dir,
     state_file_path,
+    user_config_dir,
 )
 from now_playing_desktops.env_loader import load_environment, resolve_spotify_username
 from now_playing_desktops.platforms import UnsupportedPlatformError, get_platform
@@ -212,6 +213,27 @@ def _argv_requests_verbose(argv: list[str]) -> bool:
     return any(token in {"-v", "--verbose"} for token in argv)
 
 
+def _resolve_env_file_path(explicit: Path | None) -> Path | None:
+    if explicit is None:
+        return None
+    return explicit.expanduser().resolve()
+
+
+def _ensure_runtime_working_directory() -> None:
+    """Match autostart/login sessions: run with the app config dir as cwd."""
+    target = user_config_dir()
+    target.mkdir(parents=True, exist_ok=True)
+    try:
+        import os
+
+        os.chdir(target)
+    except OSError:
+        logging.getLogger(__name__).warning(
+            "Could not chdir to %s; relative asset paths may fail",
+            target,
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     if sys.platform == "win32":
         from now_playing_desktops.platforms.windows_monitors import set_process_dpi_aware
@@ -222,7 +244,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     verbose = bool(getattr(args, "verbose", False)) or _argv_requests_verbose(argv)
     _configure_logging(verbose)
-    load_environment(explicit=getattr(args, "env_file", None), verbose=verbose)
+    env_file = _resolve_env_file_path(getattr(args, "env_file", None))
+    load_environment(explicit=env_file, verbose=verbose)
+    if args.command in {"run", "restore"}:
+        _ensure_runtime_working_directory()
     if args.command == "run":
         return _run(args)
     if args.command == "restore":

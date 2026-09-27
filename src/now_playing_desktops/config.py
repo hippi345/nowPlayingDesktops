@@ -11,6 +11,8 @@ DEFAULT_POLL_INTERVAL_SECONDS = 2.5
 MIN_POLL_INTERVAL_SECONDS = 2.0
 MAX_POLL_INTERVAL_SECONDS = 3.0
 COMPOSED_CACHE_MAX_ENTRIES = 24
+# Bump when compose layout/visual output changes so stale PNGs are not reused.
+COMPOSED_CACHE_VERSION = "glass-panel-v2"
 MAX_COVER_UPSCALE = 1.5
 FOREGROUND_HEIGHT_RATIO = 0.4
 STATE_FILENAME = "wallpaper-state.json"

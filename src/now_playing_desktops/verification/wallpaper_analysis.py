@@ -85,6 +85,7 @@ def assert_glass_panel_present(
     *,
     min_luminance_delta: float = 4.0,
     min_uniformity_gain: float = 0.08,
+    require_uniformity: bool = True,
 ) -> None:
     px0, py0, px1, py1 = layout.panel
     cx0, cy0, cx1, cy1 = layout.cover
@@ -113,7 +114,7 @@ def assert_glass_panel_present(
     outer = composed.crop((px0 + 6, py0 + 6, px1 - 6, py1 - 6)).convert("L")
     inner_var = _image_variance(inner)
     outer_var = _image_variance(outer)
-    if inner_var > 0 and outer_var / inner_var < 1.0 + min_uniformity_gain:
+    if require_uniformity and inner_var > 0 and outer_var / inner_var < 1.0 + min_uniformity_gain:
         raise AssertionError(
             f"Glass panel lacks frosted uniformity (inner_var={inner_var:.1f}, "
             f"outer_var={outer_var:.1f})",

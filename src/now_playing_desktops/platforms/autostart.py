@@ -51,7 +51,9 @@ def build_run_argv(*, env_file: Path, username: str | None) -> list[str]:
 
 def _windows_run_command(*, env_file: Path, username: str | None) -> str:
     argv = build_run_argv(env_file=env_file, username=username)
-    return " ".join(_quote_windows_argument(part) for part in argv)
+    inner = " ".join(_quote_windows_argument(part) for part in argv)
+    workdir = _working_directory()
+    return f'cmd /c "cd /d {_quote_windows_argument(str(workdir))} && {inner}"'
 
 
 def _working_directory() -> Path:
