@@ -13,6 +13,7 @@ from now_playing_desktops.config import (
     default_cache_dir,
     state_file_path,
 )
+from now_playing_desktops.env_loader import load_environment, resolve_spotify_username
 from now_playing_desktops.platforms import UnsupportedPlatformError, get_platform
 from now_playing_desktops.runner import NowPlayingRunner, RunnerDeps
 
@@ -32,6 +33,12 @@ def _shared_verbose_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="store_true",
         help="Enable debug logging.",
+    )
+    shared.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Load Spotify OAuth settings from this .env file (see README).",
     )
     return shared
 
@@ -55,7 +62,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Poll Spotify and update the wallpaper.",
         parents=[shared],
     )
-    run_parser.add_argument("username", help="Spotify username for OAuth")
+    run_parser.add_argument(
+        "username",
+        nargs="?",
+        default=None,
+        help="Spotify username for OAuth (optional if SPOTIPY_CLIENT_USERNAME is set).",
+    )
     run_parser.add_argument(
         "--poll-interval",
         type=float,
@@ -96,6 +108,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("enable", "disable", "status"),
         help="Register, remove, or query autostart.",
     )
+    autostart_parser.add_argument(
+        "username",
+        nargs="?",
+        default=None,
+        help="Spotify username to embed in autostart (optional if SPOTIPY_CLIENT_USERNAME is set).",
+    )
     return parser
 
 
@@ -106,9 +124,17 @@ def _run(args: argparse.Namespace) -> int:
         print(exc, file=sys.stderr)
         return 1
 
-    client_bundle = create_spotify_client(args.username)
+    username = resolve_spotify_username(args.username)
+    if username is None:
+        print(
+            "Spotify username required: pass it on the command line or set "
+            "SPOTIPY_CLIENT_USERNAME.",
+            file=sys.stderr,
+        )
+        return 1
+    client_bundle = create_spotify_client(username)
     if client_bundle is None:
-        print("Can't get token for", args.username, file=sys.stderr)
+        print("Can't get token for", username, file=sys.stderr)
         return 1
     sp, _manager, refresh = client_bundle
 
@@ -138,6 +164,7 @@ def _run(args: argparse.Namespace) -> int:
 
 def _autostart(args: argparse.Namespace) -> int:
     from now_playing_desktops.platforms.autostart import (
+        AutostartSetupError,
         autostart_enabled,
         disable_autostart,
         enable_autostart,
@@ -147,7 +174,11 @@ def _autostart(args: argparse.Namespace) -> int:
         print("enabled" if autostart_enabled() else "disabled")
         return 0
     if args.action == "enable":
-        enable_autostart()
+        try:
+            enable_autostart(env_file=args.env_file, username=args.username)
+        except AutostartSetupError as exc:
+            print(exc, file=sys.stderr)
+            return 1
         print("Autostart enabled")
         return 0
     disable_autostart()
@@ -191,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     verbose = bool(getattr(args, "verbose", False)) or _argv_requests_verbose(argv)
     _configure_logging(verbose)
+    load_environment(explicit=getattr(args, "env_file", None), verbose=verbose)
     if args.command == "run":
         return _run(args)
     if args.command == "restore":
