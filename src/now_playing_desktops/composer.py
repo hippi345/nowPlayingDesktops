@@ -17,7 +17,7 @@ TEXT_WIDTH_COVER_FACTOR = 1.6
 TEXT_WIDTH_SCREEN_FACTOR = 0.8
 ELLIPSIS = "…"
 TEXT_SUPERSAMPLE_FACTOR = 3
-ARTIST_TEXT_ALPHA = int(255 * 0.78)
+ARTIST_TEXT_ALPHA = int(255 * 0.85)
 ARTIST_TEXT_RGB = (255, 255, 255)
 TITLE_FONT_FILE = "Inter-Bold.ttf"
 ARTIST_FONT_FILE = "Inter-Medium.ttf"
@@ -40,16 +40,16 @@ GLASS_PANEL_PADDING_DIVISOR = 26
 GLASS_CORNER_RADIUS_SHORT_SIDE_FRAC = 0.048
 GLASS_BACKDROP_EXTRA_BLUR_DIVISOR = 22
 GLASS_TINT_RGB = (22, 24, 32)
-GLASS_TINT_ALPHA = 68
+GLASS_TINT_ALPHA = 102
 GLASS_SATURATION_BOOST = 1.22
 GLASS_INNER_BORDER_ALPHA = 48
 GLASS_INNER_BORDER_WIDTH_REF = 1
 GLASS_INNER_BORDER_SCREEN_HEIGHT_REF = 1080
 GLASS_SPECULAR_TOP_ALPHA = 44
 GLASS_SPECULAR_HEIGHT_FRAC = 0.32
-GLASS_DROP_SHADOW_BLUR_FRAC = 0.038
-GLASS_DROP_SHADOW_OFFSET_FRAC = 0.012
-GLASS_DROP_SHADOW_ALPHA = 58
+GLASS_DROP_SHADOW_BLUR_FRAC = 0.042
+GLASS_DROP_SHADOW_OFFSET_FRAC = 0.01
+GLASS_DROP_SHADOW_ALPHA = 92
 
 # --- Cover frame ---
 COVER_CORNER_RADIUS_DIVISOR = 30
@@ -60,10 +60,10 @@ RIM_HIGHLIGHT_SCREEN_HEIGHT_REF = 1080
 # --- Layered cover shadow (contact + ambient) ---
 COVER_SHADOW_CONTACT_OFFSET_Y_FRAC = 0.016
 COVER_SHADOW_CONTACT_BLUR_FRAC = 0.05
-COVER_SHADOW_CONTACT_ALPHA = 230
+COVER_SHADOW_CONTACT_ALPHA = 150
 COVER_SHADOW_AMBIENT_OFFSET_Y_FRAC = 0.065
 COVER_SHADOW_AMBIENT_BLUR_FRAC = 0.2
-COVER_SHADOW_AMBIENT_ALPHA = 200
+COVER_SHADOW_AMBIENT_ALPHA = 110
 COVER_SHADOW_AMBIENT_PAD_FRAC = 0.24
 
 # --- Dominant-color glow behind cover ---
@@ -300,7 +300,8 @@ def contrast_ratio(foreground: tuple[int, int, int], background: tuple[int, int,
 def _rounded_rectangle_mask(size: tuple[int, int], radius: int) -> Image.Image:
     mask = Image.new("L", size, 0)
     draw = ImageDraw.Draw(mask)
-    draw.rounded_rectangle((0, 0, size[0], size[1]), radius=radius, fill=255)
+    w, h = size
+    draw.rounded_rectangle((0, 0, w - 1, h - 1), radius=radius, fill=255)
     return mask
 
 
@@ -514,6 +515,31 @@ def _render_text_layer_supersampled(
     return layer.resize((down_w, down_h), Image.Resampling.LANCZOS)
 
 
+def _cover_shadow_clip_rect(
+    placement: CoverPlacement,
+    layout: WallpaperLayout,
+    screen_height: int,
+) -> tuple[int, int, int, int]:
+    """Keep cover shadows under the artwork, not over the title block."""
+    px0, py0, px1, py1 = layout.panel
+    bleed = max(
+        8,
+        int(placement.height * COVER_SHADOW_AMBIENT_BLUR_FRAC * 0.45),
+    )
+    shadow_extent = max(
+        int(placement.height * COVER_SHADOW_CONTACT_OFFSET_Y_FRAC),
+        int(placement.height * COVER_SHADOW_AMBIENT_OFFSET_Y_FRAC),
+    )
+    max_shadow_y = placement.y + placement.height + shadow_extent + bleed
+    text_top = layout.title[1] - max(4, screen_height // 80)
+    y1_clip = min(max_shadow_y, text_top, py1)
+    pad_x = int(placement.height * COVER_SHADOW_AMBIENT_PAD_FRAC)
+    x0 = max(px0, placement.x - pad_x)
+    x1 = min(px1, placement.x + placement.width + pad_x)
+    y0 = max(py0, placement.y - bleed)
+    return (x0, y0, x1, y1_clip)
+
+
 def _clip_layer_to_rounded_rect(
     layer: Image.Image,
     rect: tuple[int, int, int, int],
@@ -523,7 +549,7 @@ def _clip_layer_to_rounded_rect(
     x0, y0, x1, y1 = rect
     panel_mask = Image.new("L", layer.size, 0)
     draw = ImageDraw.Draw(panel_mask)
-    draw.rounded_rectangle(rect, radius=radius, fill=255)
+    draw.rounded_rectangle((x0, y0, x1 - 1, y1 - 1), radius=radius, fill=255)
     rgba = layer.convert("RGBA")
     red, green, blue, alpha = rgba.split()
     clipped = ImageChops.multiply(alpha, panel_mask)
@@ -580,6 +606,21 @@ def _build_glass_panel_layer(
     return _apply_rounded_alpha(glass, mask)
 
 
+def _trim_layer_alpha_above_y(layer: Image.Image, max_y: int) -> Image.Image:
+    """Drop shadow pixels above ``max_y`` so the panel does not look doubled."""
+    if max_y <= 0:
+        return layer
+    rgba = layer.convert("RGBA")
+    w, h = rgba.size
+    if max_y >= h:
+        return layer
+    red, green, blue, alpha = rgba.split()
+    keep = alpha.crop((0, max_y, w, h))
+    trimmed = Image.new("L", (w, h), 0)
+    trimmed.paste(keep, (0, max_y))
+    return Image.merge("RGBA", (red, green, blue, trimmed))
+
+
 def _build_panel_drop_shadow(
     panel_rect: tuple[int, int, int, int],
     canvas_size: tuple[int, int],
@@ -590,18 +631,26 @@ def _build_panel_drop_shadow(
     short = min(pw, ph)
     blur = max(10.0, short * GLASS_DROP_SHADOW_BLUR_FRAC)
     offset_y = max(2, int(short * GLASS_DROP_SHADOW_OFFSET_FRAC))
-    shadow_w = max(32, int(pw * 0.9))
-    shadow_h = max(16, int(ph * 0.2))
-    shadow_radius = max(8, int(_glass_corner_radius(pw, ph) * 0.75))
+    shadow_w = max(48, int(pw * 0.86))
+    shadow_h = max(16, int(ph * 0.14))
+    shadow_radius = max(8, int(_glass_corner_radius(pw, ph) * 0.8))
     shadow_mask = _rounded_rectangle_mask((shadow_w, shadow_h), shadow_radius)
     shadow_fill = Image.new("RGBA", (shadow_w, shadow_h), (0, 0, 0, GLASS_DROP_SHADOW_ALPHA))
     shadow_fill = _apply_rounded_alpha(shadow_fill, shadow_mask)
-    shadow_blur = shadow_fill.filter(ImageFilter.GaussianBlur(radius=blur))
+    pad = max(4, int(blur * 2.5))
+    padded = Image.new(
+        "RGBA",
+        (shadow_w + pad * 2, shadow_h + pad * 2),
+        (0, 0, 0, 0),
+    )
+    padded.paste(shadow_fill, (pad, pad), shadow_fill)
+    shadow_blur = padded.filter(ImageFilter.GaussianBlur(radius=blur))
     layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
-    paste_x = x0 + (pw - shadow_w) // 2
-    paste_y = y1 + offset_y
+    paste_x = x0 + (pw - shadow_w) // 2 - pad
+    paste_y = y1 + offset_y - pad
     layer.paste(shadow_blur, (paste_x, paste_y), shadow_blur)
-    return layer
+    bleed_under = max(2, int(short * 0.006))
+    return _trim_layer_alpha_above_y(layer, y1 + bleed_under)
 
 
 def compose_wallpaper(
@@ -653,14 +702,19 @@ def compose_wallpaper(
             radius=panel_radius,
         ),
     )
-    canvas = Image.alpha_composite(
-        canvas,
-        _clip_layer_to_rounded_rect(
-            _build_layered_shadow_layer(placement, (width, height)),
-            panel_rect,
-            radius=panel_radius,
-        ),
+    cover_shadow_clip = _cover_shadow_clip_rect(placement, layout_spec, height)
+    cover_shadow_layer = _build_layered_shadow_layer(placement, (width, height))
+    cover_shadow_layer = _clip_layer_to_rounded_rect(
+        cover_shadow_layer,
+        cover_shadow_clip,
+        radius=placement.corner_radius,
     )
+    cover_shadow_layer = _clip_layer_to_rounded_rect(
+        cover_shadow_layer,
+        panel_rect,
+        radius=panel_radius,
+    )
+    canvas = Image.alpha_composite(canvas, cover_shadow_layer)
 
     glass = _build_glass_panel_layer(backdrop_rgb, layout_spec.panel, height)
     px, py = layout_spec.panel[0], layout_spec.panel[1]

@@ -6,12 +6,15 @@ import pytest
 from PIL import ImageFont
 
 from now_playing_desktops.composer import (
+    ARTIST_TEXT_ALPHA,
+    ARTIST_TEXT_RGB,
     TEXT_SUPERSAMPLE_FACTOR,
     TITLE_FONT_FILE,
     _font_path,
     _load_package_font,
     _render_text_layer_supersampled,
     compose_wallpaper,
+    contrast_ratio,
     plan_wallpaper_layout,
     render_backdrop,
 )
@@ -133,3 +136,28 @@ def test_glass_panel_single_layer_rounded_corners_and_soft_shadow_below():
     below_rgb = composed.getpixel((sample_x, below_y))
     backdrop_below = backdrop.getpixel((sample_x, below_y))
     assert sum(abs(below_rgb[i] - backdrop_below[i]) for i in range(3)) < 42
+
+
+def test_artist_text_contrast_on_glass_panel():
+    cover = make_sample_cover()
+    width, height = 1664, 1109
+    composed = compose_wallpaper(
+        cover,
+        title=LONG_TITLE,
+        artist="Test Artist",
+        width=width,
+        height=height,
+    )
+    layout = plan_wallpaper_layout(
+        cover,
+        title=LONG_TITLE,
+        artist="Test Artist",
+        width=width,
+        height=height,
+    )
+    ax0, ay0, ax1, ay1 = layout.artist
+    cx = (ax0 + ax1) // 2
+    cy = (ay0 + ay1) // 2
+    background = composed.getpixel((cx, cy))
+    artist_rgb = tuple(int(c * ARTIST_TEXT_ALPHA / 255) for c in ARTIST_TEXT_RGB)
+    assert contrast_ratio(artist_rgb, background) >= 4.5
