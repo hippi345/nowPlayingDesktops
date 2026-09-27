@@ -80,7 +80,7 @@ def test_spotify_oauth_manager_uses_pkce_without_secret(monkeypatch, tmp_path):
 
 def test_token_cache_lives_under_user_config_dir(monkeypatch, tmp_path):
     monkeypatch.setattr(
-        "now_playing_desktops.auth.user_config_dir",
+        "now_playing_desktops.config.user_config_dir",
         lambda: tmp_path,
     )
     handler = cache_handler_for_user("myuser")

@@ -158,7 +158,7 @@ def _get_access_token(
 
     _precheck_oauth_redirect_port(manager)
     try:
-        if isinstance(manager, SpotifyOAuth):
+        if spotify_auth_mode() == "client_secret":
             return manager.get_access_token(as_dict=as_dict)
         return manager.get_access_token()
     except OSError as exc:
