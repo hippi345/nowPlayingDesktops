@@ -25,17 +25,16 @@ def test_cli_verbose_after_subcommand_parses():
 
 
 def test_cli_verbose_before_subcommand_parses():
-    with patch("now_playing_desktops.cli.NowPlayingRunner") as runner_cls:
-        runner = runner_cls.return_value
-        with (
-            patch("now_playing_desktops.cli.get_platform", return_value=MagicMock()),
-            patch(
-                "now_playing_desktops.cli.create_spotify_client",
-                return_value=(MagicMock(), MagicMock(), MagicMock()),
-            ),
-            patch("now_playing_desktops.cli.logging.basicConfig") as basic_config,
-        ):
-            code = main(["-v", "run", "user", "--once"])
+    with (
+        patch("now_playing_desktops.cli.NowPlayingRunner"),
+        patch("now_playing_desktops.cli.get_platform", return_value=MagicMock()),
+        patch(
+            "now_playing_desktops.cli.create_spotify_client",
+            return_value=(MagicMock(), MagicMock(), MagicMock()),
+        ),
+        patch("now_playing_desktops.cli.logging.basicConfig") as basic_config,
+    ):
+        code = main(["-v", "run", "user", "--once"])
     assert code == 0
     basic_config.assert_called_once()
     assert basic_config.call_args.kwargs.get("level") == logging.DEBUG
