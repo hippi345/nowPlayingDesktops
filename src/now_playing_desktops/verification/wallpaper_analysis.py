@@ -121,6 +121,39 @@ def assert_glass_panel_present(
         )
 
 
+def glass_ring_luminance_means(
+    composed: Image.Image,
+    layout: WallpaperLayout,
+    backdrop: Image.Image,
+) -> tuple[float, float]:
+    """Return mean luminance of the glass ring samples and matching backdrop samples."""
+    px0, py0, px1, py1 = layout.panel
+    cx0, cy0, cx1, cy1 = layout.cover
+    ring_boxes = [
+        (px0 + 4, py0 + 4, cx0 - 2, cy1 - 2),
+        (cx1 + 2, py0 + 4, px1 - 4, cy1 - 2),
+    ]
+    panel_lums: list[float] = []
+    backdrop_lums: list[float] = []
+    for box in ring_boxes:
+        if box[2] <= box[0] or box[3] <= box[1]:
+            continue
+        panel_lums.append(mean_luminance(composed, box))
+        backdrop_lums.append(mean_luminance(backdrop, box))
+    if not panel_lums:
+        return 0.0, 0.0
+    return sum(panel_lums) / len(panel_lums), sum(backdrop_lums) / len(backdrop_lums)
+
+
+def glass_ring_luminance_margin(
+    composed: Image.Image,
+    layout: WallpaperLayout,
+    backdrop: Image.Image,
+) -> float:
+    panel_mean, backdrop_mean = glass_ring_luminance_means(composed, layout, backdrop)
+    return abs(panel_mean - backdrop_mean)
+
+
 def assert_title_text_present(
     composed: Image.Image,
     layout: WallpaperLayout,

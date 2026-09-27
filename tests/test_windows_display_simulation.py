@@ -39,8 +39,15 @@ def test_compose_cache_version_busts_stale_paths(tmp_path: Path):
         )
         .hexdigest()[:32]
     )
+    versioned_key = (
+        __import__("hashlib")
+        .sha256(
+            f"{COMPOSED_CACHE_VERSION}|t1|https://art|1664x1109".encode(),
+        )
+        .hexdigest()[:32]
+    )
     assert path.name != f"{legacy_key}.png"
-    assert COMPOSED_CACHE_VERSION in "glass-panel-v2"
+    assert path.name == f"{versioned_key}.png"
 
 
 def test_win150_simulation_artifacts_pr12_vs_fixed():

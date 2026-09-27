@@ -142,6 +142,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _run(args: argparse.Namespace) -> int:
+    from now_playing_desktops.single_instance import ensure_single_run_instance
+
+    run_lock = ensure_single_run_instance()
+    if run_lock is None:
+        return 0
+    try:
+        return _run_with_lock(args)
+    finally:
+        run_lock.release()
+
+
+def _run_with_lock(args: argparse.Namespace) -> int:
     try:
         platform = get_platform()
     except UnsupportedPlatformError as exc:

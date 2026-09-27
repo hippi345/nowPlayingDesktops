@@ -94,6 +94,41 @@ class CoverPlacement:
 
 
 @dataclass(frozen=True)
+class GlassContrastAdaptation:
+    tint_rgb: tuple[int, int, int]
+    tint_alpha: int
+    inner_border_alpha: int
+    specular_top_alpha: int
+    fill_lift_alpha: int
+    rim_highlight_alpha: int
+
+
+def _glass_contrast_adaptation(backdrop_luminance: float) -> GlassContrastAdaptation:
+    """Boost panel lift and edges when the blurred backdrop behind the panel is very dark."""
+    if backdrop_luminance >= 52.0:
+        return GlassContrastAdaptation(
+            tint_rgb=GLASS_TINT_RGB,
+            tint_alpha=GLASS_TINT_ALPHA,
+            inner_border_alpha=GLASS_INNER_BORDER_ALPHA,
+            specular_top_alpha=GLASS_SPECULAR_TOP_ALPHA,
+            fill_lift_alpha=0,
+            rim_highlight_alpha=RIM_HIGHLIGHT_ALPHA,
+        )
+    strength = min(1.0, max(0.0, (52.0 - backdrop_luminance) / 52.0))
+    tint_r = int(GLASS_TINT_RGB[0] + (72 - GLASS_TINT_RGB[0]) * strength)
+    tint_g = int(GLASS_TINT_RGB[1] + (78 - GLASS_TINT_RGB[1]) * strength)
+    tint_b = int(GLASS_TINT_RGB[2] + (96 - GLASS_TINT_RGB[2]) * strength)
+    return GlassContrastAdaptation(
+        tint_rgb=(tint_r, tint_g, tint_b),
+        tint_alpha=int(GLASS_TINT_ALPHA + 55 * strength),
+        inner_border_alpha=int(GLASS_INNER_BORDER_ALPHA + 90 * strength),
+        specular_top_alpha=int(GLASS_SPECULAR_TOP_ALPHA + 40 * strength),
+        fill_lift_alpha=int(18 + 40 * strength),
+        rim_highlight_alpha=int(RIM_HIGHLIGHT_ALPHA + 70 * strength),
+    )
+
+
+@dataclass(frozen=True)
 class WallpaperLayout:
     """Pixel rectangles (left, top, right, bottom) for centering tests."""
 
@@ -454,10 +489,13 @@ def _draw_rim_highlight(
     canvas: Image.Image,
     placement: CoverPlacement,
     screen_height: int,
+    *,
+    highlight_alpha: int | None = None,
 ) -> Image.Image:
     layer = canvas.convert("RGBA")
     draw = ImageDraw.Draw(layer)
     inset = _rim_highlight_width(screen_height) // 2
+    alpha = RIM_HIGHLIGHT_ALPHA if highlight_alpha is None else highlight_alpha
     draw.rounded_rectangle(
         (
             placement.x + inset,
@@ -466,7 +504,7 @@ def _draw_rim_highlight(
             placement.y + placement.height - inset - 1,
         ),
         radius=max(1, placement.corner_radius - inset),
-        outline=(255, 255, 255, RIM_HIGHLIGHT_ALPHA),
+        outline=(255, 255, 255, alpha),
         width=_rim_highlight_width(screen_height),
     )
     return layer
@@ -567,17 +605,24 @@ def _build_glass_panel_layer(
     backdrop: Image.Image,
     panel_rect: tuple[int, int, int, int],
     screen_height: int,
+    *,
+    adaptation: GlassContrastAdaptation | None = None,
 ) -> Image.Image:
     x0, y0, x1, y1 = panel_rect
     pw, ph = x1 - x0, y1 - y0
     radius = _glass_corner_radius(pw, ph)
     mask = _rounded_rectangle_mask((pw, ph), radius)
     crop = backdrop.crop(panel_rect).convert("RGBA")
+    if adaptation is None:
+        adaptation = _glass_contrast_adaptation(mean_luminance(backdrop, panel_rect))
     extra_blur = max(6.0, min(pw, ph) / GLASS_BACKDROP_EXTRA_BLUR_DIVISOR)
     crop = crop.filter(ImageFilter.GaussianBlur(radius=extra_blur))
     crop = ImageEnhance.Color(crop).enhance(GLASS_SATURATION_BOOST)
-    tint = Image.new("RGBA", (pw, ph), (*GLASS_TINT_RGB, GLASS_TINT_ALPHA))
+    tint = Image.new("RGBA", (pw, ph), (*adaptation.tint_rgb, adaptation.tint_alpha))
     glass = Image.alpha_composite(crop, tint)
+    if adaptation.fill_lift_alpha > 0:
+        lift = Image.new("RGBA", (pw, ph), (255, 255, 255, adaptation.fill_lift_alpha))
+        glass = Image.alpha_composite(glass, lift)
 
     border_w = _scale_for_height(
         screen_height,
@@ -590,7 +635,7 @@ def _build_glass_panel_layer(
     draw.rounded_rectangle(
         (inset, inset, pw - inset - 1, ph - inset - 1),
         radius=max(1, radius - inset),
-        outline=(255, 255, 255, GLASS_INNER_BORDER_ALPHA),
+        outline=(255, 255, 255, adaptation.inner_border_alpha),
         width=border_w,
     )
     glass = Image.alpha_composite(glass, border_layer)
@@ -599,7 +644,7 @@ def _build_glass_panel_layer(
     spec_layer = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
     spec_draw = ImageDraw.Draw(spec_layer)
     for row in range(spec_h):
-        alpha = int(GLASS_SPECULAR_TOP_ALPHA * (1 - row / spec_h) ** 1.6)
+        alpha = int(adaptation.specular_top_alpha * (1 - row / spec_h) ** 1.6)
         spec_draw.line([(0, row), (pw, row)], fill=(255, 255, 255, alpha))
     spec_layer = _apply_rounded_alpha(spec_layer, mask)
     glass = Image.alpha_composite(glass, spec_layer)
@@ -681,9 +726,10 @@ def compose_wallpaper(
         screen_height=height,
         foreground_width=placement.width,
     )
+    panel_rect = layout_spec.panel
+    panel_adaptation = _glass_contrast_adaptation(mean_luminance(backdrop_rgb, panel_rect))
     mask = _rounded_rectangle_mask((placement.width, placement.height), placement.corner_radius)
 
-    panel_rect = layout_spec.panel
     panel_radius = _glass_corner_radius(
         panel_rect[2] - panel_rect[0],
         panel_rect[3] - panel_rect[1],
@@ -716,7 +762,12 @@ def compose_wallpaper(
     )
     canvas = Image.alpha_composite(canvas, cover_shadow_layer)
 
-    glass = _build_glass_panel_layer(backdrop_rgb, layout_spec.panel, height)
+    glass = _build_glass_panel_layer(
+        backdrop_rgb,
+        layout_spec.panel,
+        height,
+        adaptation=panel_adaptation,
+    )
     px, py = layout_spec.panel[0], layout_spec.panel[1]
     glass_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     glass_layer.paste(glass, (px, py), glass)
@@ -729,7 +780,12 @@ def compose_wallpaper(
         mask,
     )
     canvas = Image.alpha_composite(canvas, fg_layer)
-    canvas = _draw_rim_highlight(canvas, placement, height)
+    canvas = _draw_rim_highlight(
+        canvas,
+        placement,
+        height,
+        highlight_alpha=panel_adaptation.rim_highlight_alpha,
+    )
 
     title_layer = _render_text_layer_supersampled(
         layout.title,

@@ -61,6 +61,7 @@ class NowPlayingRunner:
         self._state = WallpaperSessionState.load(deps.state_path)
         self._restore_registered = False
         self._render_errors_logged: set[str] = set()
+        self._logged_idle_no_original_restore = False
 
     def _sleep(self, seconds: float) -> None:
         self.deps.sleep(seconds)
@@ -81,7 +82,11 @@ class NowPlayingRunner:
 
         original = state.original_wallpaper_path
         if not original:
-            logger.info("No saved original wallpaper to restore")
+            if not self._logged_idle_no_original_restore:
+                logger.info("No saved original wallpaper to restore")
+                self._logged_idle_no_original_restore = True
+            else:
+                logger.debug("No saved original wallpaper to restore")
             if state.session_active:
                 state.clear_restore_data()
                 state.save(self.deps.state_path)
@@ -219,7 +224,7 @@ class NowPlayingRunner:
                 f"does not match target {width}x{height}",
             )
         save_wallpaper(composed, tmp)
-        self._validate_composed_wallpaper(
+        self._maybe_warn_composed_wallpaper_quality(
             composed,
             cover=cover,
             title=track.title,
@@ -229,7 +234,7 @@ class NowPlayingRunner:
         )
         return self._composed_cache.put(track.track_id, track.art_url, width, height, tmp)
 
-    def _validate_composed_wallpaper(
+    def _maybe_warn_composed_wallpaper_quality(
         self,
         composed: Image.Image,
         *,
@@ -240,6 +245,7 @@ class NowPlayingRunner:
         height: int,
     ) -> None:
         from now_playing_desktops.composer import plan_wallpaper_layout, render_backdrop
+        from now_playing_desktops.config import strict_compose_verification_enabled
         from now_playing_desktops.verification.wallpaper_analysis import (
             assert_glass_panel_present,
             assert_no_backdrop_band_edges,
@@ -254,9 +260,30 @@ class NowPlayingRunner:
             height=height,
         )
         backdrop = render_backdrop(cover, width, height)
-        assert_glass_panel_present(composed, layout, backdrop, require_uniformity=False)
-        assert_title_text_present(composed, layout)
-        assert_no_backdrop_band_edges(composed, cover, layout=layout)
+        checks: list[tuple[str, Callable[[], None]]] = [
+            (
+                "glass panel",
+                lambda: assert_glass_panel_present(
+                    composed,
+                    layout,
+                    backdrop,
+                    require_uniformity=False,
+                ),
+            ),
+            ("title text", lambda: assert_title_text_present(composed, layout)),
+            (
+                "backdrop bands",
+                lambda: assert_no_backdrop_band_edges(composed, cover, layout=layout),
+            ),
+        ]
+        for label, check in checks:
+            try:
+                check()
+            except AssertionError as exc:
+                message = f"Compose quality check failed ({label}): {exc}"
+                if strict_compose_verification_enabled():
+                    raise
+                logger.warning("%s; applying wallpaper anyway", message)
 
     def _log_render_error_once(self, track_id: str, exc: BaseException) -> None:
         if track_id in self._render_errors_logged:
@@ -375,7 +402,7 @@ class NowPlayingRunner:
                 origin_top=origin_top,
             )
             tile = composed.crop((x0, y0, x1, y1))
-            self._validate_composed_wallpaper(
+            self._maybe_warn_composed_wallpaper_quality(
                 tile,
                 cover=cover,
                 title=track.title,
@@ -441,6 +468,7 @@ class NowPlayingRunner:
             return
 
         self._render_errors_logged.discard(track.track_id)
+        self._logged_idle_no_original_restore = False
         self._last_applied = key
         self._state.session_active = True
         self._state.save(self.deps.state_path)

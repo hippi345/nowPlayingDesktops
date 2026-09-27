@@ -124,7 +124,22 @@ def _windows_enable_autostart(*, env_file: Path, username: str | None) -> None:
         winreg.HKEY_CURRENT_USER,
         r"Software\Microsoft\Windows\CurrentVersion\Run",
     ) as key:
+        # SetValueEx replaces any prior value for this name (never stacks duplicates).
         winreg.SetValueEx(key, _windows_run_key_name(), 0, winreg.REG_SZ, command)
+
+
+def read_windows_autostart_command() -> str | None:
+    import winreg
+
+    try:
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+        ) as key:
+            value, _ = winreg.QueryValueEx(key, _windows_run_key_name())
+    except OSError:
+        return None
+    return str(value) if value else None
 
 
 def _windows_disable_autostart() -> None:

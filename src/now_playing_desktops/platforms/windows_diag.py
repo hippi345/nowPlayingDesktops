@@ -40,6 +40,9 @@ class WindowsDiagReport:
     registry_tile_wallpaper: str
     current_wallpaper_path: str | None
     log_file_path: str
+    autostart_run_command: str | None = None
+    run_lock_available: bool = True
+    run_lock_holder: str | None = None
 
 
 def collect_windows_diag_report() -> WindowsDiagReport:
@@ -84,6 +87,11 @@ def collect_windows_diag_report() -> WindowsDiagReport:
     platform = WindowsWallpaperPlatform()
     current = platform.get_current_wallpaper()
     reg = read_applied_wallpaper_style()
+    from now_playing_desktops.platforms.autostart import read_windows_autostart_command
+    from now_playing_desktops.single_instance import probe_run_lock_held
+
+    lock_status = probe_run_lock_held()
+    autostart_cmd = read_windows_autostart_command()
 
     return WindowsDiagReport(
         monitors=rows,
@@ -95,6 +103,9 @@ def collect_windows_diag_report() -> WindowsDiagReport:
         registry_tile_wallpaper=reg["tile_wallpaper"],
         current_wallpaper_path=str(current) if current else None,
         log_file_path=str(log_file_path()),
+        autostart_run_command=autostart_cmd,
+        run_lock_available=lock_status.acquired,
+        run_lock_holder=lock_status.holder_description,
     )
 
 
@@ -163,6 +174,16 @@ def format_windows_diag_report(report: WindowsDiagReport) -> str:
         f"TileWallpaper={report.registry_tile_wallpaper}",
     )
     lines.append(f"Current wallpaper: {report.current_wallpaper_path or '(none)'}")
+    if report.autostart_run_command is not None:
+        lines.append(f"Autostart Run entry: {report.autostart_run_command}")
+    else:
+        lines.append("Autostart Run entry: (not registered)")
+    if report.run_lock_available:
+        lines.append("Run lock: available (no other instance detected)")
+    else:
+        lines.append(
+            f"Run lock: held by {report.run_lock_holder or 'another instance'}",
+        )
     return "\n".join(lines)
 
 

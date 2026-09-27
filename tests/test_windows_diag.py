@@ -116,6 +116,17 @@ def test_windows_diag_mocked_96dpi_1664x1109():
             return_value="per-monitor-v2",
         ),
         patch("now_playing_desktops.platforms.windows_dpi.set_process_dpi_aware"),
+        patch(
+            "now_playing_desktops.single_instance.probe_run_lock_held",
+            return_value=__import__(
+                "now_playing_desktops.single_instance",
+                fromlist=["RunLockStatus"],
+            ).RunLockStatus(acquired=True),
+        ),
+        patch(
+            "now_playing_desktops.platforms.autostart.read_windows_autostart_command",
+            return_value="now-playing run --env-file .env",
+        ),
     ):
         report = collect_windows_diag_report()
         text = format_windows_diag_report(report)
