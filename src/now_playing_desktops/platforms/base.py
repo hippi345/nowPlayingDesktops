@@ -17,6 +17,7 @@ class ScreenInfo:
     is_primary: bool = False
     left: int = 0
     top: int = 0
+    device_name: str = ""
 
 
 class WallpaperPlatform(Protocol):

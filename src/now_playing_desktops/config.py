@@ -11,9 +11,19 @@ DEFAULT_POLL_INTERVAL_SECONDS = 2.5
 MIN_POLL_INTERVAL_SECONDS = 2.0
 MAX_POLL_INTERVAL_SECONDS = 3.0
 COMPOSED_CACHE_MAX_ENTRIES = 24
+# Bump when compose layout/visual output changes so stale PNGs are not reused.
+COMPOSED_CACHE_VERSION = "glass-panel-v3"
 MAX_COVER_UPSCALE = 1.5
 FOREGROUND_HEIGHT_RATIO = 0.4
 STATE_FILENAME = "wallpaper-state.json"
+
+
+def strict_compose_verification_enabled() -> bool:
+    return os.environ.get("NOW_PLAYING_STRICT_COMPOSE_VERIFY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 
 
 def user_config_dir() -> Path:

@@ -53,6 +53,9 @@ jobs:
       - name: Tests
         run: pytest --cov=now_playing_desktops --cov-report=term-missing -q
 
+      - name: Linux desktop wallpaper centering (Xvfb + feh + mss)
+        run: pytest tests/test_linux_desktop_wallpaper.py -q
+
   test-windows:
     runs-on: windows-latest
     steps:
@@ -83,3 +86,17 @@ jobs:
 
       - name: Windows wallpaper restore smoke test
         run: pytest tests/test_windows_restore.py::test_windows_wallpaper_smoke_snapshot_apply_restore -q
+
+      - name: Windows desktop wallpaper capture verification
+        env:
+          NP_ARTIFACTS_DIR: ${{ runner.temp }}/np-artifacts
+        run: pytest tests/test_windows_desktop_wallpaper.py -q
+
+      - name: Upload desktop verification captures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-desktop-captures
+          path: |
+            ${{ runner.temp }}/np-artifacts/win-desktop-capture-after-fix.png
+          if-no-files-found: warn

@@ -98,29 +98,94 @@ def test_monitor_info_from_win32_invalid_rect_falls_back():
     info = wm._MONITORINFO()
     info.rcMonitor = wm._RECT(0, 1664, 1109, 0)
     info.dwFlags = wm.MONITORINFOF_PRIMARY
-    monitor = wm.monitor_info_from_win32(
-        1,
-        info,
-        fallback_width=1664,
-        fallback_height=1109,
-    )
+    with patch(
+        "now_playing_desktops.platforms.windows_dpi.enum_display_settings_monitor_geometry",
+        return_value=None,
+    ):
+        monitor = wm.monitor_info_from_win32(
+            1,
+            info,
+            fallback_width=1664,
+            fallback_height=1109,
+        )
     assert monitor.width == 1664
     assert monitor.height == 1109
 
 
-def test_enumerate_monitors_uses_get_monitor_info_not_lprect():
-    if sys.platform != "win32":
-        pytest.skip("EnumDisplayMonitors callback requires win32")
+def test_monitor_device_name_from_szdevice_reads_str_and_value():
+    from now_playing_desktops.platforms import windows_monitors as wm
+
+    info = wm._MONITORINFOEXW()
+    info.szDevice = r"\\.\DISPLAY1"
+    assert wm.monitor_device_name_from_szdevice(info.szDevice) == r"\\.\DISPLAY1"
+
+    class _FakeBuffer:
+        value = r"\\.\DISPLAY2"
+
+    assert wm.monitor_device_name_from_szdevice(_FakeBuffer()) == r"\\.\DISPLAY2"
+
+
+def test_enumerate_monitors_passes_szdevice_to_enum_display_settings():
     import ctypes
 
+    import now_playing_desktops.platforms.windows_dpi  # noqa: F401 — load before sys.platform patch
+    from now_playing_desktops.platforms import windows_monitors as wm
+
+    fake_user32 = MagicMock()
+    rect = wm._RECT(0, 0, 1664, 1109)
+    device = r"\\.\DISPLAY1"
+
+    def get_info(_hmon, byref_info):
+        if hasattr(byref_info, "contents"):
+            info = byref_info.contents
+        else:
+            info = ctypes.cast(byref_info, ctypes.POINTER(wm._MONITORINFOEXW)).contents
+        info.rcMonitor = rect
+        info.dwFlags = wm.MONITORINFOF_PRIMARY
+        info.szDevice = device
+        return True
+
+    fake_user32.GetMonitorInfoW.side_effect = get_info
+    fake_user32.GetSystemMetrics.side_effect = lambda metric: 1664 if metric == 0 else 1109
+
+    def fake_enum(_hdc, _clip, callback, _data):
+        callback(7, 0, ctypes.pointer(rect), 0)
+        return True
+
+    fake_user32.EnumDisplayMonitors.side_effect = fake_enum
+    geometry_mock = MagicMock(return_value=(1664, 1109, 0, 0))
+
+    with (
+        patch.object(sys, "platform", "win32"),
+        patch("now_playing_desktops.platforms.windows_monitors.user32", fake_user32),
+        patch("now_playing_desktops.platforms.windows_monitors.set_process_dpi_aware"),
+        patch(
+            "now_playing_desktops.platforms.windows_dpi.enum_display_settings_monitor_geometry",
+            geometry_mock,
+        ),
+    ):
+        monitors = wm.enumerate_monitors()
+
+    assert monitors[0].device_name == device
+    geometry_mock.assert_called_with(device)
+
+
+def test_enumerate_monitors_uses_get_monitor_info_not_lprect():
+    import ctypes
+
+    import now_playing_desktops.platforms.windows_dpi  # noqa: F401
     from now_playing_desktops.platforms import windows_monitors as wm
 
     fake_user32 = MagicMock()
     rect = wm._RECT(0, 0, 1664, 1109)
 
     def get_info(_hmon, byref_info):
-        byref_info.contents.rcMonitor = rect
-        byref_info.contents.dwFlags = wm.MONITORINFOF_PRIMARY
+        if hasattr(byref_info, "contents"):
+            info = byref_info.contents
+        else:
+            info = ctypes.cast(byref_info, ctypes.POINTER(wm._MONITORINFOEXW)).contents
+        info.rcMonitor = rect
+        info.dwFlags = wm.MONITORINFOF_PRIMARY
         return True
 
     fake_user32.GetMonitorInfoW.side_effect = get_info
@@ -133,8 +198,13 @@ def test_enumerate_monitors_uses_get_monitor_info_not_lprect():
     fake_user32.EnumDisplayMonitors.side_effect = fake_enum
 
     with (
+        patch.object(sys, "platform", "win32"),
         patch("now_playing_desktops.platforms.windows_monitors.user32", fake_user32),
         patch("now_playing_desktops.platforms.windows_monitors.set_process_dpi_aware"),
+        patch(
+            "now_playing_desktops.platforms.windows_dpi.enum_display_settings_monitor_geometry",
+            return_value=(1664, 1109, 0, 0),
+        ),
     ):
         monitors = enumerate_monitors()
 
@@ -146,13 +216,21 @@ def test_enumerate_monitors_uses_get_monitor_info_not_lprect():
 
 
 def test_windows_per_monitor_set_when_com_available(tmp_path):
+    from PIL import Image
+
     image = tmp_path / "bg.jpg"
-    image.write_bytes(b"x")
+    Image.new("RGB", (64, 64), (40, 80, 120)).save(image, format="JPEG")
     with (
         patch.object(sys, "platform", "win32"),
+        patch("now_playing_desktops.platforms.windows_restore.winreg"),
         patch(
             "now_playing_desktops.platforms.windows_com.idesktop_wallpaper_available",
             return_value=True,
+        ),
+        patch.object(
+            WindowsWallpaperPlatform,
+            "_monitor_pixel_size_for_screen",
+            return_value=(64, 64),
         ),
         patch(
             "now_playing_desktops.platforms.windows._set_wallpaper_on_monitor",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -8,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 from now_playing_desktops.platforms.base import ScreenInfo
 from now_playing_desktops.runner import NowPlayingRunner, RunnerDeps
 
-ARTIFACTS_DIR = Path("/opt/cursor/artifacts")
+ARTIFACTS_DIR = Path(os.environ.get("NP_ARTIFACTS_DIR", "/opt/cursor/artifacts"))
 
 
 def make_sample_cover(size: int = 640) -> Image.Image:
@@ -81,7 +82,13 @@ class FakePlatform:
         self.screen = screen
         self.set_calls: list[Path] = []
 
-    def set_wallpaper(self, path: Path, *, screen_id: str | None = None) -> None:
+    def set_wallpaper(
+        self,
+        path: Path,
+        *,
+        screen_id: str | None = None,
+        virtual_desktop_span: bool = False,
+    ) -> None:
         self.set_calls.append(path)
         self.wallpaper = path
 
@@ -125,6 +132,38 @@ class FakePlatform:
             path = Path(raw)
             if path.is_file():
                 self.set_wallpaper(path)
+
+
+def make_legacy_cached_wallpaper_without_glass(
+    cover: Image.Image,
+    *,
+    title: str,
+    artist: str,
+    width: int,
+    height: int,
+) -> Image.Image:
+    """Synthetic pre-glass cache entry (cover + rim only) for regression simulation."""
+    from now_playing_desktops.composer import (
+        _draw_rim_highlight,
+        _foreground_cover,
+        _rounded_rectangle_mask,
+        compute_cover_placement,
+        render_backdrop,
+    )
+
+    backdrop = render_backdrop(cover, width, height)
+    placement = compute_cover_placement(cover, width, height)
+    canvas = backdrop.convert("RGBA")
+    mask = _rounded_rectangle_mask((placement.width, placement.height), placement.corner_radius)
+    fg_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    fg_layer.paste(
+        _foreground_cover(cover.convert("RGBA"), width, height),
+        (placement.x, placement.y),
+        mask,
+    )
+    canvas = Image.alpha_composite(canvas, fg_layer)
+    canvas = _draw_rim_highlight(canvas, placement, height)
+    return canvas.convert("RGB")
 
 
 def make_runner(

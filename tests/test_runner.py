@@ -122,6 +122,30 @@ def test_dedupe_no_reset_on_same_track(tmp_path: Path):
     assert len(platform.set_calls) == 1
 
 
+def test_idle_no_original_restore_logged_once(tmp_path: Path, caplog):
+    import logging
+
+    platform = FakePlatform(wallpaper=tmp_path / "orig.jpg")
+    (tmp_path / "orig.jpg").write_bytes(b"x")
+    runner = make_runner(tmp_path, platform=platform)
+    with (
+        patch(
+            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            return_value=PAUSED,
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        runner.apply_playback_once()
+        runner.apply_playback_once()
+        runner.apply_playback_once()
+    info_lines = [
+        r.message
+        for r in caplog.records
+        if r.levelno == logging.INFO and r.message == "No saved original wallpaper to restore"
+    ]
+    assert len(info_lines) == 1
+
+
 def test_cache_hit_skips_second_download_and_compose(tmp_path: Path):
     original = tmp_path / "original.jpg"
     original.write_bytes(b"orig")

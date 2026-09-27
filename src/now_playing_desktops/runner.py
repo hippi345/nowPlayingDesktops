@@ -61,6 +61,7 @@ class NowPlayingRunner:
         self._state = WallpaperSessionState.load(deps.state_path)
         self._restore_registered = False
         self._render_errors_logged: set[str] = set()
+        self._logged_idle_no_original_restore = False
 
     def _sleep(self, seconds: float) -> None:
         self.deps.sleep(seconds)
@@ -81,7 +82,11 @@ class NowPlayingRunner:
 
         original = state.original_wallpaper_path
         if not original:
-            logger.info("No saved original wallpaper to restore")
+            if not self._logged_idle_no_original_restore:
+                logger.info("No saved original wallpaper to restore")
+                self._logged_idle_no_original_restore = True
+            else:
+                logger.debug("No saved original wallpaper to restore")
             if state.session_active:
                 state.clear_restore_data()
                 state.save(self.deps.state_path)
@@ -201,7 +206,8 @@ class NowPlayingRunner:
         self._download_dir.mkdir(parents=True, exist_ok=True)
         download_path = self._download_dir / f"{track.track_id}.jpg"
         download_album_art(track.art_url, download_path, session=self.deps.session)
-        with Image.open(download_path) as cover:
+        with Image.open(download_path) as cover_image:
+            cover = cover_image.convert("RGBA")
             composed = compose_wallpaper(
                 cover,
                 title=track.title,
@@ -218,7 +224,66 @@ class NowPlayingRunner:
                 f"does not match target {width}x{height}",
             )
         save_wallpaper(composed, tmp)
+        self._maybe_warn_composed_wallpaper_quality(
+            composed,
+            cover=cover,
+            title=track.title,
+            artist=track.artist,
+            width=width,
+            height=height,
+        )
         return self._composed_cache.put(track.track_id, track.art_url, width, height, tmp)
+
+    def _maybe_warn_composed_wallpaper_quality(
+        self,
+        composed: Image.Image,
+        *,
+        cover: Image.Image,
+        title: str,
+        artist: str,
+        width: int,
+        height: int,
+    ) -> None:
+        from now_playing_desktops.composer import plan_wallpaper_layout, render_backdrop
+        from now_playing_desktops.config import strict_compose_verification_enabled
+        from now_playing_desktops.verification.wallpaper_analysis import (
+            assert_glass_panel_present,
+            assert_no_backdrop_band_edges,
+            assert_title_text_present,
+        )
+
+        layout = plan_wallpaper_layout(
+            cover,
+            title=title,
+            artist=artist,
+            width=width,
+            height=height,
+        )
+        backdrop = render_backdrop(cover, width, height)
+        checks: list[tuple[str, Callable[[], None]]] = [
+            (
+                "glass panel",
+                lambda: assert_glass_panel_present(
+                    composed,
+                    layout,
+                    backdrop,
+                    require_uniformity=False,
+                ),
+            ),
+            ("title text", lambda: assert_title_text_present(composed, layout)),
+            (
+                "backdrop bands",
+                lambda: assert_no_backdrop_band_edges(composed, cover, layout=layout),
+            ),
+        ]
+        for label, check in checks:
+            try:
+                check()
+            except AssertionError as exc:
+                message = f"Compose quality check failed ({label}): {exc}"
+                if strict_compose_verification_enabled():
+                    raise
+                logger.warning("%s; applying wallpaper anyway", message)
 
     def _log_render_error_once(self, track_id: str, exc: BaseException) -> None:
         if track_id in self._render_errors_logged:
@@ -234,14 +299,12 @@ class NowPlayingRunner:
     def _resolve_wallpaper_render_jobs(
         self,
         screens: list,
-    ) -> list[tuple[str | None, int, int]]:
+    ) -> list[tuple[str | None, int, int, bool]]:
+        """Return ``(screen_id, width, height, virtual_desktop_span)`` render jobs."""
         per_screen = self.deps.platform.supports_per_screen_wallpaper()
-        if per_screen and len({(s.width, s.height) for s in screens}) > 1:
-            jobs: list[tuple[str | None, int, int]] = []
-            for screen in screens:
-                jobs.append((screen.screen_id, screen.width, screen.height))
-            return jobs
-        if sys.platform == "win32":
+        if per_screen and len(screens) > 1:
+            return [(screen.screen_id, screen.width, screen.height, False) for screen in screens]
+        if sys.platform == "win32" and len(screens) > 1:
             from now_playing_desktops.platforms.windows_monitors import (
                 MonitorInfo,
                 compose_canvas_pixel_size,
@@ -256,28 +319,130 @@ class NowPlayingRunner:
                     is_primary=screen.is_primary,
                     left=getattr(screen, "left", 0),
                     top=getattr(screen, "top", 0),
+                    device_name=getattr(screen, "device_name", ""),
                 )
                 for screen in screens
             ]
             log_monitors_for_wallpaper_render(monitors)
             width, height = compose_canvas_pixel_size(monitors)
-            return [(None, width, height)]
+            return [(None, width, height, True)]
         if screens:
             primary = next((s for s in screens if s.is_primary), screens[0])
-            return [(None, primary.width, primary.height)]
+            return [(None, primary.width, primary.height, False)]
         width, height = self.deps.platform.get_primary_screen_size()
-        return [(None, width, height)]
+        return [(None, width, height, False)]
+
+    def _monitors_from_screens(self, screens: list) -> list:
+        from now_playing_desktops.platforms.windows_monitors import MonitorInfo
+
+        return [
+            MonitorInfo(
+                monitor_id=screen.screen_id,
+                width=screen.width,
+                height=screen.height,
+                is_primary=screen.is_primary,
+                left=getattr(screen, "left", 0),
+                top=getattr(screen, "top", 0),
+                device_name=getattr(screen, "device_name", ""),
+            )
+            for screen in screens
+        ]
+
+    def _monitor_layout_signature(self, monitors: list) -> str:
+        return "|".join(
+            f"{monitor.monitor_id}:{monitor.width}x{monitor.height}@{monitor.left},{monitor.top}"
+            for monitor in sorted(monitors, key=lambda item: item.monitor_id)
+        )
+
+    def _compose_virtual_desktop_path(
+        self,
+        track: TrackPlayback,
+        monitors: list,
+    ) -> Path:
+        from now_playing_desktops.platforms.windows_monitors import compose_canvas_pixel_size
+        from now_playing_desktops.platforms.windows_virtual_compose import (
+            compose_virtual_desktop_wallpaper,
+            monitor_rect_on_canvas,
+            virtual_desktop_origin,
+        )
+
+        canvas_w, canvas_h = compose_canvas_pixel_size(monitors)
+        signature = self._monitor_layout_signature(monitors)
+        cached = self._composed_cache.get(
+            track.track_id,
+            track.art_url,
+            canvas_w,
+            canvas_h,
+            layout_signature=f"virtual:{signature}",
+        )
+        if cached:
+            logger.debug("Virtual desktop cache hit for %s", track.track_id)
+            return cached
+
+        self._download_dir.mkdir(parents=True, exist_ok=True)
+        download_path = self._download_dir / f"{track.track_id}.jpg"
+        download_album_art(track.art_url, download_path, session=self.deps.session)
+        with Image.open(download_path) as cover_image:
+            cover = cover_image.convert("RGBA")
+            composed = compose_virtual_desktop_wallpaper(
+                cover,
+                title=track.title,
+                artist=track.artist,
+                monitors=monitors,
+            )
+        if composed.size != (canvas_w, canvas_h):
+            raise ValueError(
+                f"Virtual desktop wallpaper size {composed.size} != {canvas_w}x{canvas_h}",
+            )
+        origin_left, origin_top = virtual_desktop_origin(monitors)
+        for monitor in monitors:
+            x0, y0, x1, y1 = monitor_rect_on_canvas(
+                monitor,
+                origin_left=origin_left,
+                origin_top=origin_top,
+            )
+            tile = composed.crop((x0, y0, x1, y1))
+            self._maybe_warn_composed_wallpaper_quality(
+                tile,
+                cover=cover,
+                title=track.title,
+                artist=track.artist,
+                width=monitor.width,
+                height=monitor.height,
+            )
+        fd, tmp_name = tempfile.mkstemp(suffix=".png", dir=self._composed_cache.cache_dir)
+        os.close(fd)
+        tmp = Path(tmp_name)
+        save_wallpaper(composed, tmp)
+        return self._composed_cache.put(
+            track.track_id,
+            track.art_url,
+            canvas_w,
+            canvas_h,
+            tmp,
+            layout_signature=f"virtual:{signature}",
+        )
 
     def _apply_wallpaper_for_track(self, track: TrackPlayback) -> None:
         screens = self.deps.platform.list_screens()
-        for screen_id, width, height in self._resolve_wallpaper_render_jobs(screens):
+        monitors = self._monitors_from_screens(screens) if sys.platform == "win32" else []
+        for screen_id, width, height, virtual_span in self._resolve_wallpaper_render_jobs(
+            screens,
+        ):
             if width <= 0 or height <= 0:
                 label = screen_id or "primary"
                 raise ValueError(
                     f"Invalid wallpaper size {width}x{height} for screen {label}",
                 )
-            composed_path = self._compose_path(track, width, height)
-            self.deps.platform.set_wallpaper(composed_path, screen_id=screen_id)
+            if virtual_span:
+                composed_path = self._compose_virtual_desktop_path(track, monitors)
+                self.deps.platform.set_wallpaper(
+                    composed_path,
+                    virtual_desktop_span=True,
+                )
+            else:
+                composed_path = self._compose_path(track, width, height)
+                self.deps.platform.set_wallpaper(composed_path, screen_id=screen_id)
 
     def apply_playback_once(self) -> None:
         track = fetch_playback_with_backoff(
@@ -303,6 +468,7 @@ class NowPlayingRunner:
             return
 
         self._render_errors_logged.discard(track.track_id)
+        self._logged_idle_no_original_restore = False
         self._last_applied = key
         self._state.session_active = True
         self._state.save(self.deps.state_path)

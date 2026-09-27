@@ -1,0 +1,1 @@
+"""Wallpaper layout verification helpers."""

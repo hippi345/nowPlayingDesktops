@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Legacy entry point — use `now-playing-windows` instead."""
 
+import sys
 import warnings
+
+if sys.platform == "win32":
+    from now_playing_desktops.platforms.windows_dpi import set_process_dpi_aware
+
+    set_process_dpi_aware()
 
 from now_playing_desktops.cli import main_windows
 

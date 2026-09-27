@@ -29,6 +29,10 @@ class _MONITORINFO(ctypes.Structure):
     ]
 
 
+class _MONITORINFOEXW(_MONITORINFO):
+    _fields_ = [("szDevice", wintypes.WCHAR * 32)]
+
+
 MONITORINFOF_PRIMARY = 1
 SM_CXSCREEN = 0
 SM_CYSCREEN = 1
@@ -47,6 +51,21 @@ class MonitorInfo:
     is_primary: bool
     left: int = 0
     top: int = 0
+    device_name: str = ""
+    rect_width: int = 0
+    rect_height: int = 0
+    rect_left: int = 0
+    rect_top: int = 0
+
+
+def monitor_device_name_from_szdevice(sz_device: object) -> str:
+    """Read ``MONITORINFOEXW.szDevice`` (ctypes may expose it as ``str`` or a WCHAR buffer)."""
+    if isinstance(sz_device, str):
+        return sz_device
+    value = getattr(sz_device, "value", sz_device)
+    if isinstance(value, str):
+        return value
+    return str(value)
 
 
 def monitor_size_from_rect(left: int, top: int, right: int, bottom: int) -> tuple[int, int]:
@@ -98,19 +117,9 @@ def _effective_dpi_for_hmonitor(hmonitor: int) -> tuple[int, int]:
 
 
 def set_process_dpi_aware() -> None:
-    import contextlib
+    from now_playing_desktops.platforms.windows_dpi import set_process_dpi_aware as _bootstrap
 
-    if sys.platform != "win32" or user32 is None:
-        return
-    try:
-        user32.SetProcessDpiAwarenessContext(-4)
-        return
-    except (AttributeError, OSError, TypeError):
-        pass
-    with contextlib.suppress(AttributeError, OSError):
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    with contextlib.suppress(AttributeError, OSError):
-        user32.SetProcessDPIAware()
+    _bootstrap()
 
 
 def primary_screen_pixel_size() -> tuple[int, int]:
@@ -158,15 +167,100 @@ def log_monitors_for_wallpaper_render(monitors: list[MonitorInfo]) -> None:
     logger.info("Wallpaper compose canvas: %dx%d", canvas_w, canvas_h)
 
 
+def log_wallpaper_apply_for_monitor(
+    *,
+    monitor: MonitorInfo,
+    composed_width: int,
+    composed_height: int,
+    wallpaper_style: str,
+) -> None:
+    """Log one INFO line per monitor when applying a wallpaper (Windows diagnostics)."""
+    from now_playing_desktops.platforms.windows_dpi import (
+        describe_thread_dpi_awareness_context,
+        enum_display_settings_pixel_size,
+    )
+
+    dpi_x, dpi_y = _effective_dpi_for_monitor_id(monitor.monitor_id)
+    scale_x = dpi_x / 96.0
+    scale_y = dpi_y / 96.0
+    dm_pels = enum_display_settings_pixel_size(monitor.device_name) if monitor.device_name else None
+    dm_w, dm_h = dm_pels if dm_pels else (None, None)
+    rect_w = monitor.rect_width or monitor.width
+    rect_h = monitor.rect_height or monitor.height
+    awareness = describe_thread_dpi_awareness_context()
+    logger.info(
+        "Wallpaper apply monitor=%s device=%r rcMonitor=%dx%d dmPels=%sx%s "
+        "dpi=%dx%d scale=%.2fx%.2f awareness=%s canvas=%dx%d style=%s",
+        monitor.monitor_id,
+        monitor.device_name,
+        rect_w,
+        rect_h,
+        dm_w if dm_w is not None else "?",
+        dm_h if dm_h is not None else "?",
+        dpi_x,
+        dpi_y,
+        scale_x,
+        scale_y,
+        awareness,
+        composed_width,
+        composed_height,
+        wallpaper_style,
+    )
+    if dm_w is not None and dm_h is not None and (composed_width, composed_height) != (dm_w, dm_h):
+        logger.warning(
+            "Composed wallpaper %dx%d does not match dmPels %dx%d for monitor %s",
+            composed_width,
+            composed_height,
+            dm_w,
+            dm_h,
+            monitor.monitor_id,
+        )
+
+
 def monitor_info_from_win32(
     hmonitor: int,
     info: _MONITORINFO,
     *,
     fallback_width: int,
     fallback_height: int,
+    device_name: str | None = None,
 ) -> MonitorInfo:
+    from now_playing_desktops.platforms.windows_dpi import (
+        enum_display_settings_monitor_geometry,
+        reconcile_dm_pels_with_monitor_rect,
+    )
+
     rect = info.rcMonitor
-    width, height = monitor_size_from_rect(rect.left, rect.top, rect.right, rect.bottom)
+    rect_width, rect_height = monitor_size_from_rect(rect.left, rect.top, rect.right, rect.bottom)
+    left, top = int(rect.left), int(rect.top)
+    width, height = rect_width, rect_height
+    dpi_x, dpi_y = _effective_dpi_for_hmonitor(int(hmonitor))
+    geometry = enum_display_settings_monitor_geometry(device_name) if device_name else None
+    if geometry is not None:
+        dm_w, dm_h, left, top = geometry
+        width, height = reconcile_dm_pels_with_monitor_rect(
+            dm_width=dm_w,
+            dm_height=dm_h,
+            rect_width=rect_width,
+            rect_height=rect_height,
+            dpi_x=dpi_x,
+            dpi_y=dpi_y,
+        )
+    else:
+        safe_rect_w, safe_rect_h, _ = ensure_positive_monitor_size(
+            rect_width,
+            rect_height,
+            fallback_width=fallback_width,
+            fallback_height=fallback_height,
+        )
+        width, height = safe_rect_w, safe_rect_h
+        if device_name:
+            logger.warning(
+                "EnumDisplaySettings unavailable for %r; using GetMonitorInfo rect %dx%d",
+                device_name,
+                width,
+                height,
+            )
     width, height, substituted = ensure_positive_monitor_size(
         width,
         height,
@@ -187,12 +281,14 @@ def monitor_info_from_win32(
     is_primary = bool(info.dwFlags & MONITORINFOF_PRIMARY)
     dpi_x, dpi_y = _effective_dpi_for_hmonitor(int(hmonitor))
     logger.debug(
-        "Win32 monitor %s rect=%sx%s at (%s,%s) dpi=%sx%s primary=%s",
+        "Win32 monitor %s rect=%sx%s dmPels=%sx%s at (%s,%s) dpi=%sx%s primary=%s",
         hmonitor,
+        rect_width,
+        rect_height,
         width,
         height,
-        rect.left,
-        rect.top,
+        left,
+        top,
         dpi_x,
         dpi_y,
         is_primary,
@@ -202,8 +298,13 @@ def monitor_info_from_win32(
         width=width,
         height=height,
         is_primary=is_primary,
-        left=rect.left,
-        top=rect.top,
+        left=left,
+        top=top,
+        device_name=device_name or "",
+        rect_width=rect_width,
+        rect_height=rect_height,
+        rect_left=int(rect.left),
+        rect_top=int(rect.top),
     )
 
 
@@ -217,7 +318,9 @@ def enumerate_monitors() -> list[MonitorInfo]:
     fallback_w, fallback_h = primary_screen_pixel_size()
     collected: list[MonitorInfo] = []
 
-    @ctypes.WINFUNCTYPE(
+    _callback_type = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+
+    @_callback_type(
         wintypes.BOOL,
         wintypes.HMONITOR,
         wintypes.HDC,
@@ -225,18 +328,66 @@ def enumerate_monitors() -> list[MonitorInfo]:
         wintypes.LPARAM,
     )
     def callback(hmonitor, _hdc, _lprc_monitor, _data):
-        info = _MONITORINFO()
-        info.cbSize = ctypes.sizeof(_MONITORINFO)
+        info = _MONITORINFOEXW()
+        info.cbSize = ctypes.sizeof(_MONITORINFOEXW)
         if not user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
             return True
-        collected.append(
-            monitor_info_from_win32(
+        device = ""
+        try:
+            device = monitor_device_name_from_szdevice(info.szDevice)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Could not read monitor device name for hmonitor=%s: %s",
+                hmonitor,
+                exc,
+                exc_info=True,
+            )
+        try:
+            monitor = monitor_info_from_win32(
                 int(hmonitor),
                 info,
                 fallback_width=fallback_w,
                 fallback_height=fallback_h,
+                device_name=device,
             )
-        )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "EnumDisplayMonitors callback failed for hmonitor=%s: %s",
+                hmonitor,
+                exc,
+                exc_info=True,
+            )
+            rect = info.rcMonitor
+            rect_w, rect_h = monitor_size_from_rect(
+                rect.left,
+                rect.top,
+                rect.right,
+                rect.bottom,
+            )
+            width, height, _ = ensure_positive_monitor_size(
+                rect_w,
+                rect_h,
+                fallback_width=fallback_w,
+                fallback_height=fallback_h,
+            )
+            monitor = MonitorInfo(
+                monitor_id=str(int(hmonitor)),
+                width=width,
+                height=height,
+                is_primary=bool(info.dwFlags & MONITORINFOF_PRIMARY),
+                left=int(rect.left),
+                top=int(rect.top),
+                device_name=device,
+                rect_width=rect_w,
+                rect_height=rect_h,
+                rect_left=int(rect.left),
+                rect_top=int(rect.top),
+            )
+        collected.append(monitor)
+        if sys.platform == "win32" and monitor.device_name:
+            from now_playing_desktops.platforms import windows_com
+
+            windows_com.register_monitor_device(monitor.monitor_id, monitor.device_name)
         return True
 
     user32.EnumDisplayMonitors(0, 0, callback, 0)
@@ -258,6 +409,7 @@ def enumerate_monitors() -> list[MonitorInfo]:
             is_primary=True,
             left=first.left,
             top=first.top,
+            device_name=first.device_name,
         )
     return collected
 
@@ -276,4 +428,4 @@ def largest_monitor_pixel_size(monitors: list[MonitorInfo]) -> tuple[int, int]:
 
 
 if sys.platform == "win32":
-    set_process_dpi_aware()
+    set_process_dpi_aware()  # noqa: E402 — import-time bootstrap for library use

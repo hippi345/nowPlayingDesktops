@@ -16,6 +16,7 @@ from now_playing_desktops.platforms.windows_restore import (
     TILE_WALLPAPER_OFF,
     WALLPAPER_STYLE_FILL,
     apply_windows_fill_wallpaper_style,
+    apply_windows_wallpaper_style_for_image,
 )
 from now_playing_desktops.spotify_art import TrackPlayback
 from tests.helpers import FakePlatform, make_runner, make_sample_cover
@@ -80,6 +81,26 @@ def test_apply_windows_fill_wallpaper_style_writes_registry():
     assert tile_value == TILE_WALLPAPER_OFF
 
 
+def test_exact_size_wallpaper_still_uses_fill_style(tmp_path: Path):
+    with (
+        patch.object(sys, "platform", "win32"),
+        patch("now_playing_desktops.platforms.windows_restore.winreg") as winreg_mock,
+    ):
+        chosen = apply_windows_wallpaper_style_for_image(
+            image_width=1664,
+            image_height=1109,
+            monitor_width=1664,
+            monitor_height=1109,
+        )
+    assert chosen == WALLPAPER_STYLE_FILL
+    style_value = next(
+        call.args[4]
+        for call in winreg_mock.SetValueEx.call_args_list
+        if call.args[1] == "WallpaperStyle"
+    )
+    assert style_value == WALLPAPER_STYLE_FILL
+
+
 def test_runner_render_jobs_match_primary_monitor_size(tmp_path: Path):
     platform = FakePlatform(
         wallpaper=tmp_path / "unused.jpg",
@@ -87,7 +108,7 @@ def test_runner_render_jobs_match_primary_monitor_size(tmp_path: Path):
     )
     runner = make_runner(tmp_path, platform=platform)
     jobs = runner._resolve_wallpaper_render_jobs(platform.list_screens())
-    assert jobs == [(None, 1664, 1109)]
+    assert jobs == [(None, 1664, 1109, False)]
 
 
 def test_compose_path_output_matches_requested_monitor_size(tmp_path: Path):

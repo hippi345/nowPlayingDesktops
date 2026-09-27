@@ -10,10 +10,19 @@ if sys.platform == "win32":
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only API")
 def test_set_desktop_wallpaper_calls_system_parameters(tmp_path: Path):
-    image = tmp_path / "bg.jpg"
-    image.write_bytes(b"x")
+    from PIL import Image
 
-    with patch("now_playing_desktops.platforms.windows.ctypes") as ctypes_mock:
+    image = tmp_path / "bg.jpg"
+    Image.new("RGB", (64, 64), (30, 60, 90)).save(image, format="JPEG")
+
+    with (
+        patch(
+            "now_playing_desktops.platforms.windows.WindowsWallpaperPlatform._monitor_pixel_size_for_screen",
+            return_value=(64, 64),
+        ),
+        patch("now_playing_desktops.platforms.windows_restore.winreg"),
+        patch("now_playing_desktops.platforms.windows.ctypes") as ctypes_mock,
+    ):
         ctypes_mock.windll.user32.SystemParametersInfoW.return_value = 1
         set_desktop_wallpaper(image)
         ctypes_mock.windll.user32.SystemParametersInfoW.assert_called_once()
