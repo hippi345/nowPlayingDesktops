@@ -5,6 +5,10 @@
 
 Set your desktop wallpaper to the album art of whatever you are playing on Spotify (or another supported desktop player in **local** mode).
 
+## Screenshots
+
+<!-- screenshots: docs/*.png, docs/*.gif go here -->
+
 ## Which mode should I pick?
 
 | Mode | Command | What it needs | Players / devices | Account / app setup | Pros | Cons |
