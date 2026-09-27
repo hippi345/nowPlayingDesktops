@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 from now_playing_desktops.composer import compose_wallpaper, plan_wallpaper_layout, render_backdrop
@@ -92,8 +94,6 @@ def test_compose_layout_centering_glass_text_and_no_backdrop_bands(width: int, h
 
 def test_liquid_glass_png_regression_guard_after_shadow_clip_commit():
     """Compositor shadow/panel changes landed in 969206f; keep PNG glass/text/band checks."""
-    import subprocess
-
     cover = make_sample_cover()
     width, height = 1664, 1109
     layout = plan_wallpaper_layout(
@@ -115,10 +115,14 @@ def test_liquid_glass_png_regression_guard_after_shadow_clip_commit():
     assert_title_text_present(composed, layout)
     assert_no_backdrop_band_edges(composed, cover, layout=layout)
     px0, py0, px1, py1 = layout.panel
-    pr9_code = subprocess.check_output(
-        ["git", "show", "2746ff4:src/now_playing_desktops/composer.py"],
-        text=True,
-    )
+    try:
+        pr9_code = subprocess.check_output(
+            ["git", "show", "2746ff4:src/now_playing_desktops/composer.py"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pytest.skip("Git history for PR #9 composer unavailable in this checkout")
     namespace: dict = {}
     exec(compile(pr9_code, "composer_pr9.py", "exec"), namespace)
     pr9 = namespace["compose_wallpaper"](

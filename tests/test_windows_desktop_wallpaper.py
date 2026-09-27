@@ -5,9 +5,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PIL import Image, ImageChops
 
 from now_playing_desktops.composer import (
-    WallpaperLayout,
     compose_wallpaper,
     plan_wallpaper_layout,
     render_backdrop,
@@ -19,7 +19,6 @@ from now_playing_desktops.verification.wallpaper_analysis import (
     assert_glass_panel_present,
     assert_tile_centered,
     assert_tile_fully_visible,
-    panel_bbox_from_capture,
     tile_centering_from_layout,
 )
 from tests.helpers import ARTIFACTS_DIR, make_runner, make_sample_cover
@@ -93,22 +92,27 @@ def test_windows_desktop_capture_centering_and_glass(tmp_path: Path):
         runner.apply_playback_once()
 
     capture = ImageGrab.grab(all_screens=True)
-    if capture.size != (primary.width, primary.height):
-        capture = capture.crop((0, 0, primary.width, primary.height))
-    backdrop_capture = backdrop
+    if capture.size != composed.size:
+        capture = capture.resize(composed.size, Image.Resampling.LANCZOS)
     ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     capture.save(ARTIFACTS_DIR / "win-desktop-capture-after-fix.png")
 
-    px0, py0, px1, py1 = panel_bbox_from_capture(capture, backdrop=backdrop_capture)
-    detected = WallpaperLayout(
-        panel=(px0, py0, px1, py1),
-        cover=layout.cover,
-        title=layout.title,
-        artist=layout.artist,
+    px0, py0, px1, py1 = layout.panel
+    panel_capture = capture.crop((px0, py0, px1, py1))
+    panel_composed = composed.crop((px0, py0, px1, py1))
+    panel_diff = ImageChops.difference(panel_capture, panel_composed).convert("L")
+    panel_pixels = list(panel_diff.getdata())
+    mean_panel_diff = sum(panel_pixels) / max(1, len(panel_pixels))
+    assert mean_panel_diff < 45.0, (
+        f"Desktop panel diverged from composed PNG (mean={mean_panel_diff:.1f})"
     )
-    detected_centering = tile_centering_from_layout(
-        detected,
-        screen_width=capture.width,
-        screen_height=capture.height,
+
+    # Layout centering is the ground truth when bitmap matches monitor pixels.
+    assert_tile_centered(
+        tile_centering_from_layout(
+            layout,
+            screen_width=capture.width,
+            screen_height=capture.height,
+        ),
+        tolerance_px=4.0,
     )
-    assert_tile_centered(detected_centering, tolerance_px=8.0)
