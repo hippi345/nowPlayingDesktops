@@ -4,13 +4,12 @@ import io
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from PIL import Image
 
 from now_playing_desktops.art_resolution import resolve_track_art, try_fetch_itunes_upgrade
 from now_playing_desktops.config import online_art_enabled
-from now_playing_desktops.playback_types import TrackPlayback
 from now_playing_desktops.platforms.autostart import build_run_argv
+from now_playing_desktops.playback_types import TrackPlayback
 from tests.helpers import FakePlatform, make_runner, mock_load_track_cover_rgba
 
 
@@ -94,7 +93,7 @@ def test_cli_no_online_art_from_env_file(tmp_path: Path, monkeypatch):
             "now_playing_desktops.single_instance.ensure_single_run_instance",
             return_value=MagicMock(release=MagicMock()),
         ),
-        patch("now_playing_desktops.cli.NowPlayingRunner") as runner_cls,
+        patch("now_playing_desktops.cli.NowPlayingRunner"),
         patch("now_playing_desktops.cli.default_cache_dir", return_value=tmp_path / "cache"),
         patch("now_playing_desktops.cli.state_file_path", return_value=tmp_path / "state.json"),
     ):
@@ -116,7 +115,7 @@ def test_cli_no_online_art_flag_overrides(tmp_path: Path, monkeypatch):
             "now_playing_desktops.single_instance.ensure_single_run_instance",
             return_value=MagicMock(release=MagicMock()),
         ),
-        patch("now_playing_desktops.cli.NowPlayingRunner") as runner_cls,
+        patch("now_playing_desktops.cli.NowPlayingRunner"),
         patch("now_playing_desktops.cli.default_cache_dir", return_value=tmp_path / "cache"),
         patch("now_playing_desktops.cli.state_file_path", return_value=tmp_path / "state.json"),
     ):
