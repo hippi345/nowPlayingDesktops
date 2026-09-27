@@ -69,6 +69,13 @@ def ensure_positive_monitor_size(
     return fw, fh, True
 
 
+def _effective_dpi_for_monitor_id(monitor_id: str) -> tuple[int, int]:
+    try:
+        return _effective_dpi_for_hmonitor(int(monitor_id))
+    except (ValueError, TypeError):
+        return 96, 96
+
+
 def _effective_dpi_for_hmonitor(hmonitor: int) -> tuple[int, int]:
     if sys.platform != "win32":
         return 96, 96
@@ -136,7 +143,7 @@ def log_monitors_for_wallpaper_render(monitors: list[MonitorInfo]) -> None:
         return
     canvas_w, canvas_h = compose_canvas_pixel_size(monitors)
     for monitor in monitors:
-        dpi_x, dpi_y = _effective_dpi_for_hmonitor(int(monitor.monitor_id))
+        dpi_x, dpi_y = _effective_dpi_for_monitor_id(monitor.monitor_id)
         logger.info(
             "Monitor %s: %dx%d at (%d,%d) primary=%s effective_dpi=%dx%d",
             monitor.monitor_id,
