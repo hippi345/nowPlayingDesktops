@@ -40,7 +40,15 @@ class WallpaperPlatform(Protocol):
         """Whether distinct images can be set per ``screen_id``."""
         ...
 
-    def capture_restore_snapshot(self) -> dict[str, Any]:
+    def capture_restore_snapshot(
+        self,
+        *,
+        state_dir: Path | None = None,
+        generated_dir: Path | None = None,
+        existing_snapshot: dict[str, Any] | None = None,
+        session_active: bool = False,
+        recovering: bool = False,
+    ) -> dict[str, Any]:
         """Serialize current wallpaper settings for later restore."""
         ...
 

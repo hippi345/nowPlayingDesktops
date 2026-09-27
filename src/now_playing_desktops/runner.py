@@ -6,6 +6,7 @@ import atexit
 import logging
 import os
 import signal
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ from now_playing_desktops.spotify_art import (
 )
 from now_playing_desktops.wallpaper_state import (
     WallpaperSessionState,
+    path_is_under_directory,
     should_capture_as_original,
 )
 
@@ -100,9 +102,19 @@ class NowPlayingRunner:
         state.save(self.deps.state_path)
         self._state = WallpaperSessionState.load(self.deps.state_path)
 
-    def _ensure_original_saved(self, *, activate_session: bool) -> None:
+    def _ensure_original_saved(self, *, activate_session: bool, recovering: bool = False) -> None:
         generated_dir = self.deps.cache_dir.resolve()
         current = self.deps.platform.get_current_wallpaper()
+        current_is_ours = current is not None and path_is_under_directory(current, generated_dir)
+        if current_is_ours and (
+            self._state.original_wallpaper_snapshot or self._state.original_wallpaper_path
+        ):
+            self._state.generated_wallpaper_dir = str(generated_dir)
+            if activate_session:
+                self._state.session_active = True
+            self._state.save(self.deps.state_path)
+            logger.debug("Keeping stored original; current wallpaper is our render")
+            return
         original = should_capture_as_original(
             current,
             generated_dir=generated_dir,
@@ -111,17 +123,29 @@ class NowPlayingRunner:
         if original is None and not hasattr(self.deps.platform, "capture_restore_snapshot"):
             logger.debug("Skipping original capture (generated wallpaper or unknown path)")
             return
-        if original is not None:
+        if current_is_ours:
+            logger.debug("Skipping original capture while showing our render")
+            return
+        if hasattr(self.deps.platform, "capture_restore_snapshot"):
+            snapshot = self.deps.platform.capture_restore_snapshot(
+                state_dir=self.deps.state_path.parent,
+                generated_dir=generated_dir,
+                existing_snapshot=self._state.original_wallpaper_snapshot,
+                session_active=self._state.session_active,
+                recovering=recovering,
+            )
+            if snapshot.get("stable_path"):
+                self._state.original_wallpaper_snapshot = snapshot
+                self._state.original_wallpaper_path = snapshot["stable_path"]
+            elif original is not None:
+                self._state.original_wallpaper_path = str(original.resolve())
+        elif original is not None:
             self._state.original_wallpaper_path = str(original.resolve())
-            if hasattr(self.deps.platform, "capture_restore_snapshot"):
-                self._state.original_wallpaper_snapshot = (
-                    self.deps.platform.capture_restore_snapshot()
-                )
         self._state.generated_wallpaper_dir = str(generated_dir)
         if activate_session:
             self._state.session_active = True
         self._state.save(self.deps.state_path)
-        logger.info("Saved original wallpaper path: %s", original)
+        logger.info("Saved original wallpaper path: %s", self._state.original_wallpaper_path)
 
     def _register_shutdown_handlers(self) -> None:
         if self._restore_registered:
@@ -143,6 +167,13 @@ class NowPlayingRunner:
         signal.signal(signal.SIGINT, _signal_handler)
         signal.signal(signal.SIGTERM, _signal_handler)
 
+        if sys.platform == "win32":
+            from now_playing_desktops.platforms.windows_console import (
+                register_console_restore_handler,
+            )
+
+            register_console_restore_handler(_restore_on_exit)
+
     def startup(self) -> None:
         state = WallpaperSessionState.load(self.deps.state_path)
         recovered_crash = bool(state.session_active)
@@ -150,7 +181,10 @@ class NowPlayingRunner:
             logger.warning("Previous session did not restore; recovering original wallpaper")
             self.restore_original_wallpaper()
         self._state = WallpaperSessionState.load(self.deps.state_path)
-        self._ensure_original_saved(activate_session=not recovered_crash)
+        self._ensure_original_saved(
+            activate_session=not recovered_crash,
+            recovering=recovered_crash,
+        )
         self._register_shutdown_handlers()
 
     def _compose_path(

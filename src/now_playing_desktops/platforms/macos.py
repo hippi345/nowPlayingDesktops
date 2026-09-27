@@ -115,18 +115,48 @@ class MacOSWallpaperPlatform:
     def supports_per_screen_wallpaper(self) -> bool:
         return True
 
-    def capture_restore_snapshot(self) -> dict[str, Any]:
+    def capture_restore_snapshot(
+        self,
+        *,
+        state_dir: Path | None = None,
+        generated_dir: Path | None = None,
+        existing_snapshot: dict[str, Any] | None = None,
+        session_active: bool = False,
+        recovering: bool = False,
+    ) -> dict[str, Any]:
+        from now_playing_desktops.config import user_config_dir
+        from now_playing_desktops.wallpaper_snapshot import (
+            attach_stable_copy_to_snapshot,
+            should_preserve_existing_snapshot,
+        )
+
+        if should_preserve_existing_snapshot(
+            existing_snapshot,
+            session_active=session_active,
+            recovering=recovering,
+        ):
+            return dict(existing_snapshot or {"backend": "macos"})
+
         screens: dict[str, str] = {}
         for screen in self.list_screens():
             current = self.get_current_wallpaper(screen_id=screen.screen_id)
             if current:
                 screens[screen.screen_id] = str(current)
         primary = self.get_current_wallpaper()
-        return {
+        snap: dict[str, Any] = {
             "backend": "macos",
             "path": str(primary) if primary else None,
             "screens": screens,
         }
+        dest_dir = state_dir or user_config_dir()
+        source = primary if primary and primary.is_file() else None
+        return attach_stable_copy_to_snapshot(
+            snap,
+            state_dir=dest_dir,
+            source_path=source,
+            source_bytes=None,
+            generated_dir=generated_dir,
+        )
 
     def apply_restore_snapshot(self, snapshot: dict[str, Any]) -> None:
         screens = snapshot.get("screens") or {}
@@ -136,6 +166,12 @@ class MacOSWallpaperPlatform:
                 if path.is_file():
                     self.set_wallpaper(path, screen_id=screen_id)
             return
+        stable = snapshot.get("stable_path")
+        if stable:
+            path = Path(str(stable))
+            if path.is_file():
+                self.set_wallpaper(path)
+                return
         raw = snapshot.get("path")
         if raw:
             path = Path(raw)

@@ -60,12 +60,49 @@ class LinuxWallpaperPlatform:
     def supports_per_screen_wallpaper(self) -> bool:
         return False
 
-    def capture_restore_snapshot(self) -> dict[str, Any]:
+    def capture_restore_snapshot(
+        self,
+        *,
+        state_dir: Path | None = None,
+        generated_dir: Path | None = None,
+        existing_snapshot: dict[str, Any] | None = None,
+        session_active: bool = False,
+        recovering: bool = False,
+    ) -> dict[str, Any]:
+        from now_playing_desktops.config import user_config_dir
+        from now_playing_desktops.wallpaper_snapshot import (
+            attach_stable_copy_to_snapshot,
+            should_preserve_existing_snapshot,
+        )
+
+        if should_preserve_existing_snapshot(
+            existing_snapshot,
+            session_active=session_active,
+            recovering=recovering,
+        ):
+            preserved = dict(existing_snapshot or {})
+            preserved.setdefault("backend", "linux")
+            preserved["de"] = self._de.value
+            return preserved
+
         snap = self._backend.capture_snapshot()
         snap["de"] = self._de.value
-        return snap
+        dest_dir = state_dir or user_config_dir()
+        raw_path = snap.get("path")
+        source = Path(str(raw_path)) if raw_path else None
+        return attach_stable_copy_to_snapshot(
+            snap,
+            state_dir=dest_dir,
+            source_path=source,
+            source_bytes=None,
+            generated_dir=generated_dir,
+        )
 
     def apply_restore_snapshot(self, snapshot: dict[str, Any]) -> None:
+        stable = snapshot.get("stable_path")
+        if stable:
+            snapshot = dict(snapshot)
+            snapshot["path"] = stable
         backend_name = snapshot.get("backend")
         if backend_name == "gnome":
             self._backend = GnomeWallpaperBackend()

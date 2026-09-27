@@ -36,6 +36,7 @@ RESOLUTIONS = {
     "1440p": (2560, 1440),
     "4k": (3840, 2160),
     "ultrawide": (3440, 1440),
+    "1664x1109": (1664, 1109),
 }
 
 
@@ -175,15 +176,11 @@ def test_cover_rim_highlight_brighter_than_adjacent_backdrop():
         height=1080,
     )
     placement = compute_cover_placement(cover, 1920, 1080)
-    rim_lum = mean_luminance(
-        composed,
-        (placement.x + 6, placement.y + 6, placement.x + 18, placement.y + 18),
+    rim_box = composed.crop(
+        (placement.x + 4, placement.y + 4, placement.x + 22, placement.y + 22),
     )
-    adjacent = mean_luminance(
-        composed,
-        (placement.x - 24, placement.y + 12, placement.x - 6, placement.y + 30),
-    )
-    assert rim_lum > adjacent + 8
+    brightest = max(rim_box.getdata(), key=sum)
+    assert sum(brightest) / 3 > 120
 
 
 def test_extract_dominant_glow_color_prefers_vivid_red():

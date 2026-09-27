@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.resources
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 from now_playing_desktops.config import FOREGROUND_HEIGHT_RATIO, MAX_COVER_UPSCALE
 
@@ -15,9 +16,13 @@ ARTIST_HEIGHT_RATIO = 0.017
 TEXT_WIDTH_COVER_FACTOR = 1.6
 TEXT_WIDTH_SCREEN_FACTOR = 0.8
 ELLIPSIS = "…"
-TEXT_SHADOW_OFFSET_Y = 3
-TEXT_SHADOW_ALPHA = 210
-TEXT_STROKE_WIDTH = 1
+TEXT_SUPERSAMPLE_FACTOR = 3
+ARTIST_TEXT_ALPHA = int(255 * 0.78)
+ARTIST_TEXT_RGB = (255, 255, 255)
+TITLE_FONT_FILE = "Inter-Bold.ttf"
+ARTIST_FONT_FILE = "Inter-Medium.ttf"
+TEXT_LINE_GAP_DIVISOR = 48
+TEXT_BLOCK_GAP_DIVISOR = 40
 
 # --- Backdrop ---
 BACKDROP_BLUR_MIN_PX = 36
@@ -29,6 +34,22 @@ BACKDROP_BRIGHTNESS = 1.0 - BACKDROP_DARKEN_BLEND
 VIGNETTE_STRENGTH = 0.58
 VIGNETTE_POWER = 1.6
 VIGNETTE_MASK_SIZE = 256
+
+# --- Glass panel ("liquid glass") ---
+GLASS_PANEL_PADDING_DIVISOR = 26
+GLASS_CORNER_RADIUS_SHORT_SIDE_FRAC = 0.048
+GLASS_BACKDROP_EXTRA_BLUR_DIVISOR = 22
+GLASS_TINT_RGB = (22, 24, 32)
+GLASS_TINT_ALPHA = 68
+GLASS_SATURATION_BOOST = 1.22
+GLASS_INNER_BORDER_ALPHA = 48
+GLASS_INNER_BORDER_WIDTH_REF = 1
+GLASS_INNER_BORDER_SCREEN_HEIGHT_REF = 1080
+GLASS_SPECULAR_TOP_ALPHA = 44
+GLASS_SPECULAR_HEIGHT_FRAC = 0.32
+GLASS_DROP_SHADOW_BLUR_FRAC = 0.038
+GLASS_DROP_SHADOW_OFFSET_FRAC = 0.012
+GLASS_DROP_SHADOW_ALPHA = 58
 
 # --- Cover frame ---
 COVER_CORNER_RADIUS_DIVISOR = 30
@@ -51,12 +72,7 @@ GLOW_ALPHA = 42
 GLOW_SCALE_FRAC = 1.12
 GLOW_UPWARD_BIAS_FRAC = 0.06
 
-_FONT_CANDIDATES = (
-    "DejaVuSans.ttf",
-    "Arial.ttf",
-    "Segoe UI.ttf",
-    "Helvetica.ttc",
-)
+_FONTS_PACKAGE = "now_playing_desktops.fonts"
 
 
 @dataclass(frozen=True)
@@ -77,30 +93,41 @@ class CoverPlacement:
     corner_radius: int
 
 
-def load_wallpaper_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Load the sans-serif font used for wallpaper track labels."""
-    return _load_font(size)
+@dataclass(frozen=True)
+class WallpaperLayout:
+    """Pixel rectangles (left, top, right, bottom) for centering tests."""
+
+    panel: tuple[int, int, int, int]
+    cover: tuple[int, int, int, int]
+    title: tuple[int, int, int, int]
+    artist: tuple[int, int, int, int]
 
 
-def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    for name in _FONT_CANDIDATES:
-        for directory in (
-            Path("/usr/share/fonts/truetype/dejavu"),
-            Path("/usr/share/fonts/truetype/liberation"),
-            Path("/System/Library/Fonts/Supplemental"),
-            Path("C:/Windows/Fonts"),
-        ):
-            candidate = directory / name
-            if candidate.is_file():
-                try:
-                    return ImageFont.truetype(str(candidate), size=size)
-                except OSError:
-                    continue
-        try:
-            return ImageFont.truetype(name, size=size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
+def load_wallpaper_font(
+    size: int,
+    *,
+    bold: bool = True,
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    """Load the bundled Inter font used for wallpaper track labels."""
+    return _load_package_font(TITLE_FONT_FILE if bold else ARTIST_FONT_FILE, size)
+
+
+def _font_path(filename: str) -> Path:
+    with importlib.resources.as_file(
+        importlib.resources.files(_FONTS_PACKAGE) / filename,
+    ) as path:
+        return Path(path)
+
+
+def _load_package_font(filename: str, size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    try:
+        return ImageFont.truetype(str(_font_path(filename)), size=size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def _load_font(size: int, *, bold: bool = True) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    return _load_package_font(TITLE_FONT_FILE if bold else ARTIST_FONT_FILE, size)
 
 
 def title_font_size_for_height(height: int) -> int:
@@ -138,8 +165,8 @@ def compute_text_layout(
 ) -> TextLayout:
     title_size = title_font_size_for_height(screen_height)
     artist_size = artist_font_size_for_height(screen_height)
-    title_font = _load_font(title_size)
-    artist_font = _load_font(artist_size)
+    title_font = _load_font(title_size, bold=True)
+    artist_font = _load_font(artist_size, bold=False)
     limit = max_text_width(foreground_width, screen_width)
     return TextLayout(
         title=ellipsize(title, title_font, limit),
@@ -148,6 +175,30 @@ def compute_text_layout(
         artist_font_size=artist_size,
         max_width=limit,
     )
+
+
+def _text_bbox(
+    text: str,
+    font: ImageFont.ImageFont,
+    *,
+    anchor: str = "mt",
+) -> tuple[int, int, int, int]:
+    probe = Image.new("RGBA", (4, 4))
+    draw = ImageDraw.Draw(probe)
+    return draw.textbbox((0, 0), text, font=font, anchor=anchor)
+
+
+def _scale_for_height(screen_height: int, ref: int, value: int) -> int:
+    return max(1, round(value * screen_height / ref))
+
+
+def _glass_corner_radius(panel_w: int, panel_h: int) -> int:
+    short = min(panel_w, panel_h)
+    return max(12, int(round(short * GLASS_CORNER_RADIUS_SHORT_SIDE_FRAC)))
+
+
+def _panel_padding(screen_height: int) -> int:
+    return max(16, screen_height // GLASS_PANEL_PADDING_DIVISOR)
 
 
 def backdrop_blur_radius(width: int, height: int) -> float:
@@ -268,26 +319,78 @@ def _foreground_cover(cover: Image.Image, width: int, height: int) -> Image.Imag
     return cover.copy()
 
 
-def _cover_placement(
-    foreground: Image.Image,
+def plan_wallpaper_layout(
+    cover: Image.Image,
+    *,
+    title: str,
+    artist: str,
     width: int,
     height: int,
-    screen_height: int,
-) -> CoverPlacement:
+) -> WallpaperLayout:
+    """Compute panel, cover, and text rectangles with centered padding."""
+    foreground = _foreground_cover(cover.convert("RGBA"), width, height)
+    layout = compute_text_layout(
+        title=title,
+        artist=artist,
+        screen_width=width,
+        screen_height=height,
+        foreground_width=foreground.width,
+    )
+    title_font = _load_font(layout.title_font_size, bold=True)
+    artist_font = _load_font(layout.artist_font_size, bold=False)
+    title_bb = _text_bbox(layout.title, title_font, anchor="mt")
+    artist_bb = _text_bbox(layout.artist, artist_font, anchor="mt")
+    title_w = title_bb[2] - title_bb[0]
+    title_h = title_bb[3] - title_bb[1]
+    artist_w = artist_bb[2] - artist_bb[0]
+    artist_h = artist_bb[3] - artist_bb[1]
+    text_block_w = max(title_w, artist_w)
+    line_gap = max(4, height // TEXT_LINE_GAP_DIVISOR)
+    block_gap = max(8, height // TEXT_BLOCK_GAP_DIVISOR)
+    text_block_h = title_h + line_gap + artist_h
+    pad = _panel_padding(height)
+    panel_w = max(foreground.width, text_block_w) + pad * 2
+    panel_h = foreground.height + block_gap + text_block_h + pad * 2
+    panel_x = (width - panel_w) // 2
+    panel_y = (height - panel_h) // 2
+    cover_x = panel_x + (panel_w - foreground.width) // 2
+    cover_y = panel_y + pad
+    text_center_x = panel_x + panel_w // 2
+    title_top = cover_y + foreground.height + block_gap
+    artist_top = title_top + title_h + line_gap
+    title_rect = (
+        text_center_x + title_bb[0],
+        title_top + title_bb[1],
+        text_center_x + title_bb[2],
+        title_top + title_bb[3],
+    )
+    artist_rect = (
+        text_center_x + artist_bb[0],
+        artist_top + artist_bb[1],
+        text_center_x + artist_bb[2],
+        artist_top + artist_bb[3],
+    )
+    cover_rect = (cover_x, cover_y, cover_x + foreground.width, cover_y + foreground.height)
+    panel_rect = (panel_x, panel_y, panel_x + panel_w, panel_y + panel_h)
+    return WallpaperLayout(panel=panel_rect, cover=cover_rect, title=title_rect, artist=artist_rect)
+
+
+def compute_cover_placement(cover: Image.Image, width: int, height: int) -> CoverPlacement:
+    foreground = _foreground_cover(cover.convert("RGBA"), width, height)
+    layout = plan_wallpaper_layout(
+        cover,
+        title="Ag",
+        artist="Ag",
+        width=width,
+        height=height,
+    )
+    x0, y0, x1, y1 = layout.cover
     corner_radius = max(12, min(foreground.width, foreground.height) // COVER_CORNER_RADIUS_DIVISOR)
-    title_font = _load_font(title_font_size_for_height(screen_height))
-    artist_font = _load_font(artist_font_size_for_height(screen_height))
-    title_h = title_font.getbbox("Ag")[3] - title_font.getbbox("Ag")[1]
-    artist_h = artist_font.getbbox("Ag")[3] - artist_font.getbbox("Ag")[1]
-    text_block_height = title_h + artist_h + height // 40
-    total_height = foreground.height + text_block_height + height // 16
-    top_y = (height - total_height) // 2
-    fg_x = (width - foreground.width) // 2
     return CoverPlacement(
-        x=fg_x,
-        y=top_y,
-        width=foreground.width,
-        height=foreground.height,
+        x=x0,
+        y=y0,
+        width=x1 - x0,
+        height=y1 - y0,
         corner_radius=corner_radius,
     )
 
@@ -368,42 +471,137 @@ def _draw_rim_highlight(
     return layer
 
 
-def _draw_text_with_shadow(
-    canvas: Image.Image,
-    *,
-    xy: tuple[int, int],
+def _render_text_layer_supersampled(
     text: str,
-    font: ImageFont.ImageFont,
-    fill: tuple[int, int, int],
+    *,
+    font_size: int,
+    bold: bool,
+    fill_alpha: int,
+    canvas_width: int,
+    fill_rgb: tuple[int, int, int] = (255, 255, 255),
+    draw_shadow: bool = True,
 ) -> Image.Image:
-    layer = canvas.convert("RGBA")
+    scale = TEXT_SUPERSAMPLE_FACTOR
+    font = _load_font(font_size * scale, bold=bold)
+    bbox = _text_bbox(text, font, anchor="mt")
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+    pad = scale * 4
+    layer_w = min(canvas_width * scale, text_w + pad * 2)
+    layer_h = text_h + pad * 2
+    layer = Image.new("RGBA", (layer_w, layer_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    x, y = xy
-    shadow_y = y + TEXT_SHADOW_OFFSET_Y
+    cx = layer_w // 2
+    top = pad - bbox[1]
+    if draw_shadow:
+        shadow_y = top + scale * 3
+        draw.text(
+            (cx, shadow_y),
+            text,
+            font=font,
+            fill=(0, 0, 0, min(255, fill_alpha + 40)),
+            anchor="mt",
+        )
     draw.text(
-        (x, shadow_y),
+        (cx, top),
         text,
         font=font,
-        fill=(0, 0, 0, TEXT_SHADOW_ALPHA),
+        fill=(*fill_rgb, fill_alpha),
         anchor="mt",
-        stroke_width=TEXT_STROKE_WIDTH,
-        stroke_fill=(0, 0, 0, TEXT_SHADOW_ALPHA),
     )
-    draw.text(
-        (x, y),
-        text,
-        font=font,
-        fill=fill,
-        anchor="mt",
-        stroke_width=TEXT_STROKE_WIDTH,
-        stroke_fill=(0, 0, 0, 140),
+    down_w = max(1, layer_w // scale)
+    down_h = max(1, layer_h // scale)
+    return layer.resize((down_w, down_h), Image.Resampling.LANCZOS)
+
+
+def _clip_layer_to_rounded_rect(
+    layer: Image.Image,
+    rect: tuple[int, int, int, int],
+    *,
+    radius: int,
+) -> Image.Image:
+    x0, y0, x1, y1 = rect
+    panel_mask = Image.new("L", layer.size, 0)
+    draw = ImageDraw.Draw(panel_mask)
+    draw.rounded_rectangle(rect, radius=radius, fill=255)
+    rgba = layer.convert("RGBA")
+    red, green, blue, alpha = rgba.split()
+    clipped = ImageChops.multiply(alpha, panel_mask)
+    return Image.merge("RGBA", (red, green, blue, clipped))
+
+
+def _apply_rounded_alpha(image: Image.Image, mask: Image.Image) -> Image.Image:
+    rgba = image.convert("RGBA")
+    red, green, blue, alpha = rgba.split()
+    clipped = ImageChops.multiply(alpha, mask)
+    return Image.merge("RGBA", (red, green, blue, clipped))
+
+
+def _build_glass_panel_layer(
+    backdrop: Image.Image,
+    panel_rect: tuple[int, int, int, int],
+    screen_height: int,
+) -> Image.Image:
+    x0, y0, x1, y1 = panel_rect
+    pw, ph = x1 - x0, y1 - y0
+    radius = _glass_corner_radius(pw, ph)
+    mask = _rounded_rectangle_mask((pw, ph), radius)
+    crop = backdrop.crop(panel_rect).convert("RGBA")
+    extra_blur = max(6.0, min(pw, ph) / GLASS_BACKDROP_EXTRA_BLUR_DIVISOR)
+    crop = crop.filter(ImageFilter.GaussianBlur(radius=extra_blur))
+    crop = ImageEnhance.Color(crop).enhance(GLASS_SATURATION_BOOST)
+    tint = Image.new("RGBA", (pw, ph), (*GLASS_TINT_RGB, GLASS_TINT_ALPHA))
+    glass = Image.alpha_composite(crop, tint)
+
+    border_w = _scale_for_height(
+        screen_height,
+        GLASS_INNER_BORDER_SCREEN_HEIGHT_REF,
+        GLASS_INNER_BORDER_WIDTH_REF,
     )
+    inset = border_w
+    border_layer = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(border_layer)
+    draw.rounded_rectangle(
+        (inset, inset, pw - inset - 1, ph - inset - 1),
+        radius=max(1, radius - inset),
+        outline=(255, 255, 255, GLASS_INNER_BORDER_ALPHA),
+        width=border_w,
+    )
+    glass = Image.alpha_composite(glass, border_layer)
+
+    spec_h = max(8, int(ph * GLASS_SPECULAR_HEIGHT_FRAC))
+    spec_layer = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+    spec_draw = ImageDraw.Draw(spec_layer)
+    for row in range(spec_h):
+        alpha = int(GLASS_SPECULAR_TOP_ALPHA * (1 - row / spec_h) ** 1.6)
+        spec_draw.line([(0, row), (pw, row)], fill=(255, 255, 255, alpha))
+    spec_layer = _apply_rounded_alpha(spec_layer, mask)
+    glass = Image.alpha_composite(glass, spec_layer)
+    return _apply_rounded_alpha(glass, mask)
+
+
+def _build_panel_drop_shadow(
+    panel_rect: tuple[int, int, int, int],
+    canvas_size: tuple[int, int],
+    screen_height: int,
+) -> Image.Image:
+    x0, y0, x1, y1 = panel_rect
+    pw, ph = x1 - x0, y1 - y0
+    short = min(pw, ph)
+    blur = max(10.0, short * GLASS_DROP_SHADOW_BLUR_FRAC)
+    offset_y = max(2, int(short * GLASS_DROP_SHADOW_OFFSET_FRAC))
+    shadow_w = max(32, int(pw * 0.9))
+    shadow_h = max(16, int(ph * 0.2))
+    shadow_radius = max(8, int(_glass_corner_radius(pw, ph) * 0.75))
+    shadow_mask = _rounded_rectangle_mask((shadow_w, shadow_h), shadow_radius)
+    shadow_fill = Image.new("RGBA", (shadow_w, shadow_h), (0, 0, 0, GLASS_DROP_SHADOW_ALPHA))
+    shadow_fill = _apply_rounded_alpha(shadow_fill, shadow_mask)
+    shadow_blur = shadow_fill.filter(ImageFilter.GaussianBlur(radius=blur))
+    layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+    paste_x = x0 + (pw - shadow_w) // 2
+    paste_y = y1 + offset_y
+    layer.paste(shadow_blur, (paste_x, paste_y), shadow_blur)
     return layer
-
-
-def compute_cover_placement(cover: Image.Image, width: int, height: int) -> CoverPlacement:
-    foreground = _foreground_cover(cover.convert("RGBA"), width, height)
-    return _cover_placement(foreground, width, height, height)
 
 
 def compose_wallpaper(
@@ -417,53 +615,112 @@ def compose_wallpaper(
     """Build a wallpaper image at ``width`` x ``height``."""
     if width <= 0 or height <= 0:
         raise ValueError(f"Wallpaper size must be positive, got {width}x{height}")
-    canvas = render_backdrop(cover, width, height).convert("RGBA")
-    foreground = _foreground_cover(cover.convert("RGBA"), width, height)
-    placement = _cover_placement(foreground, width, height, height)
+    backdrop_rgb = render_backdrop(cover, width, height)
+    canvas = backdrop_rgb.convert("RGBA")
+    layout_spec = plan_wallpaper_layout(
+        cover,
+        title=title,
+        artist=artist,
+        width=width,
+        height=height,
+    )
+    placement = compute_cover_placement(cover, width, height)
     layout = compute_text_layout(
         title=title,
         artist=artist,
         screen_width=width,
         screen_height=height,
-        foreground_width=foreground.width,
+        foreground_width=placement.width,
     )
-    title_font = _load_font(layout.title_font_size)
-    artist_font = _load_font(layout.artist_font_size)
-    mask = _rounded_rectangle_mask(foreground.size, placement.corner_radius)
+    mask = _rounded_rectangle_mask((placement.width, placement.height), placement.corner_radius)
+
+    panel_rect = layout_spec.panel
+    panel_radius = _glass_corner_radius(
+        panel_rect[2] - panel_rect[0],
+        panel_rect[3] - panel_rect[1],
+    )
+    canvas = Image.alpha_composite(
+        canvas,
+        _build_panel_drop_shadow(panel_rect, (width, height), height),
+    )
 
     glow_color = extract_dominant_glow_color(cover)
     canvas = Image.alpha_composite(
         canvas,
-        _build_glow_layer(glow_color, placement, (width, height)),
+        _clip_layer_to_rounded_rect(
+            _build_glow_layer(glow_color, placement, (width, height)),
+            panel_rect,
+            radius=panel_radius,
+        ),
     )
     canvas = Image.alpha_composite(
         canvas,
-        _build_layered_shadow_layer(placement, (width, height)),
+        _clip_layer_to_rounded_rect(
+            _build_layered_shadow_layer(placement, (width, height)),
+            panel_rect,
+            radius=panel_radius,
+        ),
     )
 
+    glass = _build_glass_panel_layer(backdrop_rgb, layout_spec.panel, height)
+    px, py = layout_spec.panel[0], layout_spec.panel[1]
+    glass_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    glass_layer.paste(glass, (px, py), glass)
+    canvas = Image.alpha_composite(canvas, glass_layer)
+
     fg_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    fg_layer.paste(foreground, (placement.x, placement.y), mask)
+    fg_layer.paste(
+        _foreground_cover(cover.convert("RGBA"), width, height),
+        (placement.x, placement.y),
+        mask,
+    )
     canvas = Image.alpha_composite(canvas, fg_layer)
     canvas = _draw_rim_highlight(canvas, placement, height)
 
-    title_bbox = title_font.getbbox(layout.title)
-    title_h = title_bbox[3] - title_bbox[1]
-    text_y = placement.y + placement.height + height // 32
-    canvas = _draw_text_with_shadow(
-        canvas,
-        xy=(width // 2, text_y),
-        text=layout.title,
-        font=title_font,
-        fill=(255, 255, 255),
+    title_layer = _render_text_layer_supersampled(
+        layout.title,
+        font_size=layout.title_font_size,
+        bold=True,
+        fill_alpha=255,
+        canvas_width=width,
     )
-    canvas = _draw_text_with_shadow(
+    artist_layer = _render_text_layer_supersampled(
+        layout.artist,
+        font_size=layout.artist_font_size,
+        bold=False,
+        fill_alpha=ARTIST_TEXT_ALPHA,
+        canvas_width=width,
+        fill_rgb=ARTIST_TEXT_RGB,
+        draw_shadow=False,
+    )
+    text_center_x = (layout_spec.title[0] + layout_spec.title[2]) // 2
+    title_top = layout_spec.title[1]
+    artist_top = layout_spec.artist[1]
+    canvas = Image.alpha_composite(
         canvas,
-        xy=(width // 2, text_y + title_h + height // 80),
-        text=layout.artist,
-        font=artist_font,
-        fill=(230, 230, 230),
+        _paste_text_layer(title_layer, text_center_x, title_top, (width, height)),
+    )
+    canvas = Image.alpha_composite(
+        canvas,
+        _paste_text_layer(artist_layer, text_center_x, artist_top, (width, height)),
     )
     return canvas.convert("RGB")
+
+
+def _paste_text_layer(
+    layer: Image.Image,
+    center_x: int,
+    ink_top_y: int,
+    canvas_size: tuple[int, int],
+) -> Image.Image:
+    out = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
+    alpha = layer.split()[3]
+    ink_bbox = alpha.getbbox()
+    ink_offset_y = ink_bbox[1] if ink_bbox else 0
+    x = center_x - layer.width // 2
+    y = ink_top_y - ink_offset_y
+    out.paste(layer, (x, y), layer)
+    return out
 
 
 def save_wallpaper(image: Image.Image, path: Path) -> None:

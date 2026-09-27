@@ -79,3 +79,6 @@ jobs:
 
       - name: Windows display enumeration smoke test
         run: pytest tests/test_platforms_windows_monitors.py::test_real_monitor_enumeration_and_compose -q
+
+      - name: Windows wallpaper restore smoke test
+        run: pytest tests/test_windows_restore.py::test_windows_wallpaper_smoke_snapshot_apply_restore -q

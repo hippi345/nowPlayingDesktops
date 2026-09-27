@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,8 @@ if sys.platform == "win32":
     import winreg
 else:  # pragma: no cover
     winreg = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
 
 SPI_GETDESKWALLPAPER = 0x0073
 SPI_SETDESKWALLPAPER = 20
@@ -46,7 +49,8 @@ class WindowsWallpaperPlatform:
             path_str,
             SPIF_UPDATEINIFILE | SPIF_SENDWININICHANGE,
         ):
-            raise OSError(f"SystemParametersInfoW failed for {path_str}")
+            err = int(ctypes.windll.kernel32.GetLastError())
+            raise OSError(f"SystemParametersInfoW failed for {path_str} (GetLastError={err})")
 
     def get_current_wallpaper(self, *, screen_id: str | None = None) -> Path | None:
         if screen_id is not None and self._per_monitor:
@@ -98,7 +102,18 @@ class WindowsWallpaperPlatform:
     def supports_per_screen_wallpaper(self) -> bool:
         return self._per_monitor
 
-    def capture_restore_snapshot(self) -> dict[str, Any]:
+    def capture_restore_snapshot(
+        self,
+        *,
+        state_dir: Path | None = None,
+        generated_dir: Path | None = None,
+        existing_snapshot: dict[str, Any] | None = None,
+        session_active: bool = False,
+        recovering: bool = False,
+    ) -> dict[str, Any]:
+        from now_playing_desktops.config import user_config_dir
+        from now_playing_desktops.platforms.windows_restore import capture_windows_restore_snapshot
+
         monitors: dict[str, str] = {}
         if self._per_monitor:
             for screen in self.list_screens():
@@ -106,25 +121,30 @@ class WindowsWallpaperPlatform:
                 if current:
                     monitors[screen.screen_id] = str(current)
         primary = self.get_current_wallpaper()
-        return {
-            "backend": "windows",
-            "path": str(primary) if primary else None,
-            "monitors": monitors,
-            "per_monitor": self._per_monitor,
-        }
+        dest_dir = state_dir or user_config_dir()
+        return capture_windows_restore_snapshot(
+            state_dir=dest_dir,
+            generated_dir=generated_dir,
+            reported_path=str(primary) if primary else None,
+            per_monitor=self._per_monitor,
+            monitor_paths=monitors,
+            existing_snapshot=existing_snapshot,
+            session_active=session_active,
+            recovering=recovering,
+        )
 
     def apply_restore_snapshot(self, snapshot: dict[str, Any]) -> None:
-        if snapshot.get("per_monitor") and snapshot.get("monitors"):
-            for monitor_id, raw in snapshot["monitors"].items():
-                path = Path(raw)
-                if path.is_file():
-                    self.set_wallpaper(path, screen_id=monitor_id)
-            return
-        raw = snapshot.get("path")
-        if raw:
-            path = Path(raw)
-            if path.is_file():
-                self.set_wallpaper(path)
+        from now_playing_desktops.platforms.windows_restore import apply_windows_restore_snapshot
+
+        apply_windows_restore_snapshot(
+            snapshot,
+            set_wallpaper_on_monitor=_set_wallpaper_on_monitor,
+            set_wallpaper_primary=lambda path: self.set_wallpaper(path),
+        )
+
+    def restore_original_wallpaper(self, snapshot: dict[str, Any]) -> None:
+        """Alias used in tests; delegates to :meth:`apply_restore_snapshot`."""
+        self.apply_restore_snapshot(snapshot)
 
 
 def _wallpaper_from_registry() -> Path | None:
