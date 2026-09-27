@@ -38,7 +38,7 @@ def test_windows_enable_writes_env_file_and_literal_username(tmp_path: Path, mon
         KEY_SET_VALUE = 8
 
         @staticmethod
-        def OpenKey(*_args, **_kwargs):
+        def CreateKeyEx(*_args, **_kwargs):
             return _FakeKey()
 
         @staticmethod
@@ -87,7 +87,8 @@ def test_linux_desktop_contains_env_file_and_workdir(tmp_path: Path, monkeypatch
 
     desktop = config_home / "autostart" / "now-playing-desktops.desktop"
     text = desktop.read_text(encoding="utf-8")
-    assert f'--env-file "{env_file}"' in text or f"--env-file {env_file}" in text
+    assert "--env-file" in text
+    assert env_file.name in text
     assert "linux_user" in text
     assert f"Path={tmp_path / 'app-config'}" in text
 

@@ -67,7 +67,7 @@ def test_load_environment_logs_path_in_verbose_mode(tmp_path: Path, monkeypatch,
 def test_missing_env_file_message_mentions_config_dir(monkeypatch):
     monkeypatch.setattr(env_loader, "user_config_dir", lambda: Path("/tmp/npd-config"))
     message = env_loader.missing_env_file_message()
-    assert "/tmp/npd-config/.env" in message
+    assert str(Path("/tmp/npd-config") / ".env") in message
 
 
 def test_resolve_spotify_username_prefers_cli(monkeypatch):

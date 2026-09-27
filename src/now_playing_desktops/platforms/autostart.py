@@ -118,11 +118,9 @@ def _windows_enable_autostart(*, env_file: Path, username: str | None) -> None:
     import winreg
 
     command = _windows_run_command(env_file=env_file, username=username)
-    with winreg.OpenKey(
+    with winreg.CreateKeyEx(
         winreg.HKEY_CURRENT_USER,
         r"Software\Microsoft\Windows\CurrentVersion\Run",
-        0,
-        winreg.KEY_SET_VALUE,
     ) as key:
         winreg.SetValueEx(key, _windows_run_key_name(), 0, winreg.REG_SZ, command)
 
