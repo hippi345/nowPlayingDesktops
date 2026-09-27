@@ -68,4 +68,5 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.coverage.run]
 source = ["now_playing_desktops"]
-branch = true
+branch = false
+parallel = true
