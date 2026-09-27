@@ -86,6 +86,7 @@ Legacy entry points `now-playing-macos` and `now-playing-windows` still work.
 
 - **`now-playing run [USER] [--once] [--env-file PATH]`** — poll Spotify and update the wallpaper. `USER` is optional when `SPOTIPY_CLIENT_USERNAME` is set (recommended in your autostart `.env`).
 - **`now-playing restore`** — restore the wallpaper saved at session start (uses path or platform snapshot).
+- **`now-playing diag`** — (Windows) print monitor sizes, DPI, compose canvas, wallpaper style, and registry state without Spotify credentials.
 - **`now-playing autostart enable [USER] [--env-file PATH]|disable|status`** — register login autostart. `enable` writes an absolute `--env-file` path and your Spotify username into the Windows Run entry, XDG autostart `.desktop`, or macOS LaunchAgent (see autostart `.env` paths above).
 
 On first run, Spotipy opens a browser flow for `user-read-currently-playing`. Stop with `Ctrl+C`; the original wallpaper is restored automatically.
@@ -102,7 +103,8 @@ Session state lives in the app cache (see `state_file_path()` in `config.py`). O
 | Wallpaper does not update on GNOME | Ensure a D-Bus session (`echo $DBUS_SESSION_BUS_ADDRESS`) |
 | KDE script errors | Install `plasma-apply-wallpaperimage` or `qdbus6` |
 | macOS only primary screen changes | Install PyObjC Cocoa bindings or rely on `osascript` (default fallback) |
-| Windows wrong resolution | DPI awareness is enabled automatically; wallpaper is composed at the largest monitor size when per-monitor COM is unavailable |
+| Windows wrong resolution | Run `now-playing diag` and check `dmPels` vs compose canvas; delete stale `%APPDATA%\\now-playing-desktops\\cache\\composed\\*.png` after upgrades |
+| Autostart errors with no console | See `%APPDATA%\\now-playing-desktops\\logs\\now-playing.log` (rotating file log; same path under the platform config dir on Linux/macOS) |
 | OAuth “port in use” / WinError 10013 | Set `SPOTIPY_REDIRECT_URI` to another `127.0.0.1` port and register it in the Spotify dashboard |
 
 ## Development

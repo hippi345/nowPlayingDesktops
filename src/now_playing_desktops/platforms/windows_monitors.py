@@ -54,6 +54,8 @@ class MonitorInfo:
     device_name: str = ""
     rect_width: int = 0
     rect_height: int = 0
+    rect_left: int = 0
+    rect_top: int = 0
 
 
 def monitor_size_from_rect(left: int, top: int, right: int, bottom: int) -> tuple[int, int]:
@@ -215,34 +217,36 @@ def monitor_info_from_win32(
 ) -> MonitorInfo:
     from now_playing_desktops.platforms.windows_dpi import (
         enum_display_settings_monitor_geometry,
-        physical_pixel_size_from_rect,
+        reconcile_dm_pels_with_monitor_rect,
     )
 
     rect = info.rcMonitor
     rect_width, rect_height = monitor_size_from_rect(rect.left, rect.top, rect.right, rect.bottom)
     left, top = int(rect.left), int(rect.top)
     width, height = rect_width, rect_height
+    dpi_x, dpi_y = _effective_dpi_for_hmonitor(int(hmonitor))
     geometry = enum_display_settings_monitor_geometry(device_name) if device_name else None
     if geometry is not None:
-        width, height, left, top = geometry
+        dm_w, dm_h, left, top = geometry
+        width, height = reconcile_dm_pels_with_monitor_rect(
+            dm_width=dm_w,
+            dm_height=dm_h,
+            rect_width=rect_width,
+            rect_height=rect_height,
+            dpi_x=dpi_x,
+            dpi_y=dpi_y,
+        )
     else:
-        dpi_x, dpi_y = _effective_dpi_for_hmonitor(int(hmonitor))
         safe_rect_w, safe_rect_h, _ = ensure_positive_monitor_size(
             rect_width,
             rect_height,
             fallback_width=fallback_width,
             fallback_height=fallback_height,
         )
-        width, height = physical_pixel_size_from_rect(
-            rect_width=safe_rect_w,
-            rect_height=safe_rect_h,
-            dpi_x=dpi_x,
-            dpi_y=dpi_y,
-            native_size=None,
-        )
+        width, height = safe_rect_w, safe_rect_h
         if device_name:
             logger.warning(
-                "EnumDisplaySettings unavailable for %r; falling back to monitor rect %dx%d",
+                "EnumDisplaySettings unavailable for %r; using GetMonitorInfo rect %dx%d",
                 device_name,
                 width,
                 height,
@@ -289,6 +293,8 @@ def monitor_info_from_win32(
         device_name=device_name or "",
         rect_width=rect_width,
         rect_height=rect_height,
+        rect_left=int(rect.left),
+        rect_top=int(rect.top),
     )
 
 

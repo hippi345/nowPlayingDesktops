@@ -22,16 +22,26 @@ from now_playing_desktops.config import (
     user_config_dir,
 )
 from now_playing_desktops.env_loader import load_environment, resolve_spotify_username
+from now_playing_desktops.logging_setup import configure_application_logging
 from now_playing_desktops.platforms import UnsupportedPlatformError, get_platform
 from now_playing_desktops.runner import NowPlayingRunner, RunnerDeps
 
 
-def _configure_logging(verbose: bool) -> None:
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+def _configure_logging(verbose: bool, *, command: str) -> None:
+    configure_application_logging(
+        verbose=verbose,
+        enable_file_log=command == "run",
     )
+
+
+def _peek_command_and_verbose(argv: list[str]) -> tuple[str, bool]:
+    verbose = _argv_requests_verbose(argv)
+    command = "run"
+    for token in argv:
+        if token in {"run", "restore", "autostart", "diag"}:
+            command = token
+            break
+    return command, verbose
 
 
 def _shared_verbose_parser() -> argparse.ArgumentParser:
@@ -122,6 +132,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Spotify username to embed in autostart (optional if SPOTIPY_CLIENT_USERNAME is set).",
     )
+
+    subparsers.add_parser(
+        "diag",
+        help="Print Windows display/wallpaper diagnostics (no Spotify credentials).",
+        parents=[shared],
+    )
     return parser
 
 
@@ -194,6 +210,20 @@ def _autostart(args: argparse.Namespace) -> int:
     return 0
 
 
+def _diag(_args: argparse.Namespace) -> int:
+    if sys.platform != "win32":
+        print("diag is only available on Windows", file=sys.stderr)
+        return 1
+    from now_playing_desktops.platforms.windows_diag import (
+        collect_windows_diag_report,
+        format_windows_diag_report,
+    )
+
+    report = collect_windows_diag_report()
+    print(format_windows_diag_report(report))
+    return 0
+
+
 def _restore(args: argparse.Namespace) -> int:
     try:
         platform = get_platform()
@@ -247,10 +277,11 @@ def main(argv: list[str] | None = None) -> int:
 
         set_process_dpi_aware()
     argv = list(argv) if argv is not None else sys.argv[1:]
+    command, verbose_from_argv = _peek_command_and_verbose(argv)
     parser = build_parser()
     args = parser.parse_args(argv)
-    verbose = bool(getattr(args, "verbose", False)) or _argv_requests_verbose(argv)
-    _configure_logging(verbose)
+    verbose = bool(getattr(args, "verbose", False)) or verbose_from_argv
+    _configure_logging(verbose, command=command)
     env_file = _resolve_env_file_path(getattr(args, "env_file", None))
     load_environment(explicit=env_file, verbose=verbose)
     if args.command in {"run", "restore"}:
@@ -261,6 +292,8 @@ def main(argv: list[str] | None = None) -> int:
         return _restore(args)
     if args.command == "autostart":
         return _autostart(args)
+    if args.command == "diag":
+        return _diag(args)
     parser.error(f"Unknown command {args.command!r}")
     return 2
 

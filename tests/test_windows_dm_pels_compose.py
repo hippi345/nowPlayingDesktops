@@ -28,9 +28,15 @@ def test_compose_size_from_dm_pels_when_rc_monitor_is_logical():
     info.rcMonitor = wm._RECT(0, 0, 1664, 1109)
     info.dwFlags = wm.MONITORINFOF_PRIMARY
     device = r"\\.\DISPLAY1"
-    with patch(
-        "now_playing_desktops.platforms.windows_dpi.enum_display_settings_monitor_geometry",
-        return_value=(2496, 1664, 0, 0),
+    with (
+        patch(
+            "now_playing_desktops.platforms.windows_dpi.enum_display_settings_monitor_geometry",
+            return_value=(2496, 1664, 0, 0),
+        ),
+        patch(
+            "now_playing_desktops.platforms.windows_monitors._effective_dpi_for_hmonitor",
+            return_value=(144, 144),
+        ),
     ):
         monitor = monitor_info_from_win32(
             9,
@@ -172,3 +178,37 @@ def test_laptop_center_mismatch_simulation_artifact_and_fill_fix():
             monitor_height=physical_h,
         )
     assert style == WALLPAPER_STYLE_FILL
+
+
+def test_sim_laptop_96dpi_fill_artifact():
+    from now_playing_desktops.composer import compose_wallpaper, plan_wallpaper_layout
+
+    cover = make_sample_cover()
+    width, height = 1664, 1109
+    composed = compose_wallpaper(
+        cover,
+        title="Long Title For Centering",
+        artist="Artist",
+        width=width,
+        height=height,
+    )
+    displayed = simulate_wallpaper_on_display(
+        composed,
+        display_width=width,
+        display_height=height,
+        wallpaper_style=WALLPAPER_STYLE_FILL,
+    )
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    displayed.save(ARTIFACTS_DIR / "sim-laptop-96dpi-after.png")
+    layout = plan_wallpaper_layout(
+        cover,
+        title="Long Title For Centering",
+        artist="Artist",
+        width=width,
+        height=height,
+    )
+    assert composed.size == (1664, 1109)
+    assert displayed.size == (1664, 1109)
+    black = sum(1 for pixel in displayed.getdata() if pixel == (0, 0, 0))
+    assert black / (width * height) < 0.02
+    assert_no_backdrop_band_edges(displayed, cover, layout=layout)

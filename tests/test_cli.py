@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -43,12 +42,14 @@ def test_cli_verbose_before_subcommand_parses():
             "now_playing_desktops.cli.create_spotify_client",
             return_value=(MagicMock(), MagicMock(), MagicMock()),
         ),
-        patch("now_playing_desktops.cli.logging.basicConfig") as basic_config,
+        patch(
+            "now_playing_desktops.cli.configure_application_logging",
+        ) as configure_logging,
     ):
         code = main(["-v", "run", "user", "--once"])
     assert code == 0
-    basic_config.assert_called_once()
-    assert basic_config.call_args.kwargs.get("level") == logging.DEBUG
+    configure_logging.assert_called_once()
+    assert configure_logging.call_args.kwargs.get("verbose") is True
 
 
 def test_cli_run_once_invokes_runner(tmp_path: Path):

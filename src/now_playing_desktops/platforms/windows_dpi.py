@@ -17,6 +17,8 @@ PROCESS_SYSTEM_DPI_AWARE = 1
 PROCESS_PER_MONITOR_DPI_AWARE = 2
 
 ENUM_CURRENT_SETTINGS = -1
+# Win32 display ``DEVMODEW`` size expected by ``EnumDisplaySettingsW`` (bytes).
+DEVMODEW_DISPLAY_SIZE = 220
 DM_POSITION = 0x00000020
 DM_PELSWIDTH = 0x80000
 DM_PELSHEIGHT = 0x100000
@@ -129,7 +131,8 @@ def _enum_display_settings_devmode(device_name: str) -> DEVMODEW | None:
     if sys.platform != "win32" or user32 is None:
         return None
     devmode = DEVMODEW()
-    devmode.dmSize = ctypes.sizeof(DEVMODEW)
+    devmode.dmSize = DEVMODEW_DISPLAY_SIZE
+    devmode.dmDriverExtra = 0
     if not user32.EnumDisplaySettingsW(device_name, ENUM_CURRENT_SETTINGS, ctypes.byref(devmode)):
         return None
     return devmode
@@ -175,6 +178,41 @@ def enum_display_settings_monitor_geometry(
     return width, height, left, top
 
 
+def reconcile_dm_pels_with_monitor_rect(
+    *,
+    dm_width: int,
+    dm_height: int,
+    rect_width: int,
+    rect_height: int,
+    dpi_x: int,
+    dpi_y: int,
+) -> tuple[int, int]:
+    """
+    Keep ``dmPels`` as ground truth unless it looks like a spurious 1.5× upscale.
+
+    On the owner's 96 DPI / 1664×1109 laptop, a bad size/DPI path produced
+    ``dmPels`` or scaled sizes at exactly 1.5× ``rcMonitor`` (2496×1664), which
+    then displayed with ~75%% horizontal tile center after shell fill/stretch.
+    """
+    if rect_width <= 0 or rect_height <= 0:
+        return dm_width, dm_height
+    if dm_width == rect_width and dm_height == rect_height:
+        return dm_width, dm_height
+    if dpi_x == 96 and dpi_y == 96:
+        ratio_w = dm_width / rect_width
+        ratio_h = dm_height / rect_height
+        if abs(ratio_w - 1.5) < 0.02 and abs(ratio_h - 1.5) < 0.02:
+            logger.warning(
+                "Ignoring dmPels %dx%d (~1.5× rcMonitor %dx%d at 96 DPI); using rcMonitor",
+                dm_width,
+                dm_height,
+                rect_width,
+                rect_height,
+            )
+            return rect_width, rect_height
+    return dm_width, dm_height
+
+
 def physical_pixel_size_from_rect(
     *,
     rect_width: int,
@@ -184,47 +222,33 @@ def physical_pixel_size_from_rect(
     native_size: tuple[int, int] | None,
 ) -> tuple[int, int]:
     """
-    Resolve the pixel size used for wallpaper rendering.
+    Legacy helper for tests. Wallpaper compose uses ``EnumDisplaySettings`` only.
 
-    When the process is DPI-unaware, ``GetMonitorInfo`` returns logical sizes;
-    scale by effective DPI. When native ``EnumDisplaySettings`` exceeds the
-    rect, prefer the native (physical) resolution.
+    Do not multiply by ``dpi/96`` when the monitor rect is already in physical
+    pixels (the common per-monitor v2 case at 100%% scale).
     """
     if rect_width <= 0 or rect_height <= 0:
         return max(1, rect_width), max(1, rect_height)
 
-    scaled = (
-        max(1, round(rect_width * dpi_x / 96)),
-        max(1, round(rect_height * dpi_y / 96)),
-    )
-
     if native_size is not None:
-        native_w, native_h = native_size
-        if (native_w, native_h) != (rect_width, rect_height):
-            logger.debug(
-                "Prefer EnumDisplaySettings %dx%d over GetMonitorInfo rect %dx%d",
-                native_w,
-                native_h,
+        return native_size
+
+    if not is_process_dpi_aware() and (dpi_x, dpi_y) != (96, 96):
+        scaled = (
+            max(1, round(rect_width * dpi_x / 96)),
+            max(1, round(rect_height * dpi_y / 96)),
+        )
+        if scaled != (rect_width, rect_height):
+            logger.info(
+                "DPI-unaware monitor rect %dx%d scaled to %dx%d (dpi=%dx%d)",
                 rect_width,
                 rect_height,
+                scaled[0],
+                scaled[1],
+                dpi_x,
+                dpi_y,
             )
-        return native_w, native_h
-
-    if (
-        not is_process_dpi_aware()
-        and (dpi_x, dpi_y) != (96, 96)
-        and scaled != (rect_width, rect_height)
-    ):
-        logger.info(
-            "DPI-unaware monitor rect %dx%d scaled to %dx%d (dpi=%dx%d)",
-            rect_width,
-            rect_height,
-            scaled[0],
-            scaled[1],
-            dpi_x,
-            dpi_y,
-        )
-        return scaled
+            return scaled
 
     return rect_width, rect_height
 
