@@ -105,9 +105,7 @@ class NowPlayingRunner:
     def _ensure_original_saved(self, *, activate_session: bool, recovering: bool = False) -> None:
         generated_dir = self.deps.cache_dir.resolve()
         current = self.deps.platform.get_current_wallpaper()
-        current_is_ours = (
-            current is not None and path_is_under_directory(current, generated_dir)
-        )
+        current_is_ours = current is not None and path_is_under_directory(current, generated_dir)
         if current_is_ours and (
             self._state.original_wallpaper_snapshot or self._state.original_wallpaper_path
         ):

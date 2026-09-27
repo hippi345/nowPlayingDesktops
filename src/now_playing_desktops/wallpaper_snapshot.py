@@ -127,8 +127,10 @@ def attach_stable_copy_to_snapshot(
     basename: str = STABLE_WALLPAPER_BASENAME,
 ) -> dict[str, Any]:
     """Return ``snapshot`` updated with ``stable_path`` and ``content_hash`` when possible."""
-    digests = render_digests if render_digests is not None else collect_render_content_hashes(
-        generated_dir
+    digests = (
+        render_digests
+        if render_digests is not None
+        else collect_render_content_hashes(generated_dir)
     )
     data = source_bytes
     if data is None and source_path is not None and source_path.is_file():
