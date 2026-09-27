@@ -50,14 +50,25 @@ Copy the example environment file and fill in your Spotify app credentials:
 ```bash
 cp .env.example .env
 # Edit .env — never commit real secrets
-export $(grep -v '^#' .env | xargs)   # or set variables in your shell profile
+export $(grep -v '^#' .env | xargs)   # optional in an interactive shell
 ```
+
+For **login autostart**, the app does not inherit your shell environment. Put a copy of `.env` in the per-user config directory (loaded automatically at startup):
+
+| OS | Autostart `.env` path |
+|----|------------------------|
+| **Windows** | `%APPDATA%\now-playing-desktops\.env` |
+| **macOS** | `~/Library/Application Support/now-playing-desktops/.env` |
+| **Linux** | `$XDG_CONFIG_HOME/now-playing-desktops/.env` (default `~/.config/now-playing-desktops/.env`) |
+
+You can also pass `--env-file PATH` on `run` and `autostart enable`, or set `NOW_PLAYING_ENV_FILE` to a file path.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `SPOTIPY_CLIENT_ID` | Yes | Spotify app Client ID |
 | `SPOTIPY_CLIENT_SECRET` | Yes | Spotify app Client Secret |
 | `SPOTIPY_REDIRECT_URI` | No | OAuth redirect (default `http://127.0.0.1:8897/callback`) |
+| `SPOTIPY_CLIENT_USERNAME` | No | Spotify username (used for OAuth token cache; recommended for autostart) |
 
 In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), open your app → **Settings** → **Redirect URIs** and add this exact URI (unless you override `SPOTIPY_REDIRECT_URI`):
 
@@ -73,9 +84,9 @@ now-playing run YOUR_SPOTIFY_USERNAME
 
 Legacy entry points `now-playing-macos` and `now-playing-windows` still work.
 
-- **`now-playing run USER [--once]`** — poll Spotify and update the wallpaper.
+- **`now-playing run [USER] [--once] [--env-file PATH]`** — poll Spotify and update the wallpaper. `USER` is optional when `SPOTIPY_CLIENT_USERNAME` is set (recommended in your autostart `.env`).
 - **`now-playing restore`** — restore the wallpaper saved at session start (uses path or platform snapshot).
-- **`now-playing autostart enable|disable|status`** — register login autostart (replace `YOUR_SPOTIFY_USERNAME` in the macOS LaunchAgent manually after enabling, if needed).
+- **`now-playing autostart enable [USER] [--env-file PATH]|disable|status`** — register login autostart. `enable` writes an absolute `--env-file` path and your Spotify username into the Windows Run entry, XDG autostart `.desktop`, or macOS LaunchAgent (see autostart `.env` paths above).
 
 On first run, Spotipy opens a browser flow for `user-read-currently-playing`. Stop with `Ctrl+C`; the original wallpaper is restored automatically.
 

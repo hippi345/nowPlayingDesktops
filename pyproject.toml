@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "pillow>=11.0.0,<12",
+    "python-dotenv>=1.0.0,<2",
     "requests>=2.32.0,<3",
     "spotipy>=2.24.0,<3",
 ]

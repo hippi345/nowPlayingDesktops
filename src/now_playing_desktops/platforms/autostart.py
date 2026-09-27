@@ -7,18 +7,55 @@ import plistlib
 import sys
 from pathlib import Path
 
+from now_playing_desktops import env_loader
+from now_playing_desktops.config import user_config_dir
+
+
+class AutostartSetupError(RuntimeError):
+    """Raised when autostart cannot be configured safely."""
+
 
 def _windows_run_key_name() -> str:
     return "now-playing-desktops"
 
 
-def _windows_run_command() -> str:
+def _quote_windows_argument(value: str) -> str:
+    if value == "":
+        return '""'
+    if any(ch in value for ch in (" ", "\t", '"')):
+        return '"' + value.replace('"', r"\"") + '"'
+    return value
+
+
+def _quote_desktop_exec_argument(value: str) -> str:
+    if any(ch in value for ch in (" ", "\t", '"', "\\")):
+        return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return value
+
+
+def _runner_invocation() -> list[str]:
     import shutil
 
-    exe = shutil.which("now-playing")
-    if exe:
-        return f'"{exe}" run %USERNAME%'
-    return f'"{sys.executable}" -m now_playing_desktops run %USERNAME%'
+    script = shutil.which("now-playing")
+    if script:
+        return [script]
+    return [sys.executable, "-m", "now_playing_desktops"]
+
+
+def build_run_argv(*, env_file: Path, username: str | None) -> list[str]:
+    argv = [*_runner_invocation(), "run", "--env-file", str(env_file)]
+    if username:
+        argv.append(username)
+    return argv
+
+
+def _windows_run_command(*, env_file: Path, username: str | None) -> str:
+    argv = build_run_argv(env_file=env_file, username=username)
+    return " ".join(_quote_windows_argument(part) for part in argv)
+
+
+def _working_directory() -> Path:
+    return user_config_dir()
 
 
 def autostart_enabled() -> bool:
@@ -31,13 +68,23 @@ def autostart_enabled() -> bool:
     return False
 
 
-def enable_autostart() -> None:
+def enable_autostart(*, env_file: Path | None = None, username: str | None = None) -> None:
+    if env_file is not None and not env_file.expanduser().is_file():
+        raise AutostartSetupError(env_loader.missing_env_file_message())
+
+    env_loader.load_environment(explicit=env_file)
+    resolved_env = env_loader.find_env_file(explicit=env_file)
+    if resolved_env is None or not env_loader.spotify_credentials_configured(explicit=env_file):
+        raise AutostartSetupError(env_loader.missing_env_file_message())
+
+    resolved_username = env_loader.resolve_spotify_username(username)
+
     if sys.platform == "win32":
-        _windows_enable_autostart()
+        _windows_enable_autostart(env_file=resolved_env, username=resolved_username)
     elif sys.platform == "darwin":
-        _macos_enable_autostart()
+        _macos_enable_autostart(env_file=resolved_env, username=resolved_username)
     elif sys.platform == "linux":
-        _linux_enable_autostart()
+        _linux_enable_autostart(env_file=resolved_env, username=resolved_username)
     else:
         raise OSError(f"Autostart not supported on {sys.platform}")
 
@@ -67,16 +114,15 @@ def _windows_autostart_enabled() -> bool:
         return False
 
 
-def _windows_enable_autostart() -> None:
+def _windows_enable_autostart(*, env_file: Path, username: str | None) -> None:
     import winreg
 
-    with winreg.OpenKey(
+    command = _windows_run_command(env_file=env_file, username=username)
+    with winreg.CreateKeyEx(
         winreg.HKEY_CURRENT_USER,
         r"Software\Microsoft\Windows\CurrentVersion\Run",
-        0,
-        winreg.KEY_SET_VALUE,
     ) as key:
-        winreg.SetValueEx(key, _windows_run_key_name(), 0, winreg.REG_SZ, _windows_run_command())
+        winreg.SetValueEx(key, _windows_run_key_name(), 0, winreg.REG_SZ, command)
 
 
 def _windows_disable_autostart() -> None:
@@ -109,17 +155,18 @@ def _linux_autostart_enabled() -> bool:
     return _linux_desktop_path().is_file()
 
 
-def _linux_enable_autostart() -> None:
-    import shutil
-
-    exe = shutil.which("now-playing") or f"{sys.executable} -m now_playing_desktops"
+def _linux_enable_autostart(*, env_file: Path, username: str | None) -> None:
+    argv = build_run_argv(env_file=env_file, username=username)
+    exec_line = " ".join(_quote_desktop_exec_argument(part) for part in argv)
+    workdir = _working_directory()
     path = _linux_desktop_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     content = (
         "[Desktop Entry]\n"
         "Type=Application\n"
         "Name=Now Playing Desktops\n"
-        f"Exec={exe} run %u\n"
+        f"Exec={exec_line}\n"
+        f"Path={workdir}\n"
         "Terminal=false\n"
         "X-GNOME-Autostart-enabled=true\n"
     )
@@ -140,17 +187,14 @@ def _macos_autostart_enabled() -> bool:
     return _macos_plist_path().is_file()
 
 
-def _macos_enable_autostart() -> None:
-    import shutil
-
-    exe = shutil.which("now-playing-macos") or shutil.which("now-playing")
-    if not exe:
-        exe = f"{sys.executable} -m now_playing_desktops"
+def _macos_enable_autostart(*, env_file: Path, username: str | None) -> None:
+    argv = build_run_argv(env_file=env_file, username=username)
     plist_path = _macos_plist_path()
     plist_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "Label": "com.nowplayingdesktops.agent",
-        "ProgramArguments": [exe, "run", "SPOTIFY_USERNAME"],
+        "ProgramArguments": argv,
+        "WorkingDirectory": str(_working_directory()),
         "RunAtLoad": True,
         "KeepAlive": False,
     }
