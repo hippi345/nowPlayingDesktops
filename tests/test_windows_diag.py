@@ -4,6 +4,10 @@ import sys
 from unittest.mock import MagicMock, patch
 
 from now_playing_desktops.cli import main
+from now_playing_desktops.platforms.windows_dpi import (
+    DpiAwarenessBootstrapResult,
+    PROCESS_PER_MONITOR_DPI_AWARE,
+)
 from now_playing_desktops.platforms.windows_diag import (
     collect_windows_diag_report,
     diag_report_as_dict,
@@ -68,6 +72,8 @@ def test_monitor_info_compose_1664x1109_at_96_dpi():
 
 
 def test_windows_diag_mocked_96dpi_1664x1109():
+    import now_playing_desktops.platforms.windows as windows_platform  # noqa: F401
+
     monitors = [
         MonitorInfo(
             "65537",
@@ -85,6 +91,15 @@ def test_windows_diag_mocked_96dpi_1664x1109():
     ]
     platform = MagicMock()
     platform.get_current_wallpaper.return_value = None
+    dpi_result = DpiAwarenessBootstrapResult(
+        thread_awareness_before="unaware",
+        thread_awareness_after="per-monitor-v2",
+        process_awareness_before=0,
+        process_awareness_after=PROCESS_PER_MONITOR_DPI_AWARE,
+        successful_method="SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)",
+        attempt_log=("SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)=ok",),
+        manifest_likely=False,
+    )
     with (
         patch.object(sys, "platform", "win32"),
         patch(
@@ -100,8 +115,8 @@ def test_windows_diag_mocked_96dpi_1664x1109():
             return_value=(96, 96),
         ),
         patch(
-            "now_playing_desktops.platforms.windows_com.idesktop_wallpaper_available",
-            return_value=True,
+            "now_playing_desktops.platforms.windows_com.idesktop_wallpaper_probe",
+            return_value=(True, "CoCreateInstance(IDesktopWallpaper) via ole32 succeeded"),
         ),
         patch(
             "now_playing_desktops.platforms.windows.WindowsWallpaperPlatform",
@@ -112,10 +127,9 @@ def test_windows_diag_mocked_96dpi_1664x1109():
             return_value={"wallpaper_style": "10", "tile_wallpaper": "0"},
         ),
         patch(
-            "now_playing_desktops.platforms.windows_dpi.describe_thread_dpi_awareness_context",
-            return_value="per-monitor-v2",
+            "now_playing_desktops.platforms.windows_dpi.bootstrap_process_dpi_awareness",
+            return_value=dpi_result,
         ),
-        patch("now_playing_desktops.platforms.windows_dpi.set_process_dpi_aware"),
         patch(
             "now_playing_desktops.single_instance.probe_run_lock_held",
             return_value=__import__(
@@ -136,9 +150,15 @@ def test_windows_diag_mocked_96dpi_1664x1109():
     assert data["style_would_write"] == WALLPAPER_STYLE_FILL
     assert data["monitors"][0]["compose_size"] == (1664, 1109)
     assert data["monitors"][0]["scale"] == (1.0, 1.0)
+    assert data["monitors"][0]["device_name"] == r"\\.\DISPLAY1"
     assert "1.5" not in text
     assert "scale=1.00x1.00" in text
     assert "Style would write: 10" in text
+    assert "DISPLAY1" in text
+    assert "dmPels=1664x1109" in text
+    assert "DPI bootstrap: SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)" in text
+    assert "awareness=per-monitor-v2" in text
+    assert "IDesktopWallpaper per-monitor: True" in text
 
 
 def test_cli_diag_command(capsys):
@@ -147,6 +167,12 @@ def test_cli_diag_command(capsys):
     fake_report = WindowsDiagReport(
         monitors=[],
         per_monitor_com=False,
+        com_probe_detail="pythoncom: ImportError: no module",
+        dpi_successful_method="SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)",
+        dpi_attempt_log=(),
+        dpi_manifest_likely=False,
+        dpi_thread_before="unaware",
+        dpi_thread_after="per-monitor-v2",
         canvas_size=(1664, 1109),
         virtual_span=False,
         style_would_write="10",
@@ -157,6 +183,18 @@ def test_cli_diag_command(capsys):
     )
     with (
         patch.object(sys, "platform", "win32"),
+        patch(
+            "now_playing_desktops.platforms.windows_dpi.bootstrap_process_dpi_awareness",
+            return_value=DpiAwarenessBootstrapResult(
+                thread_awareness_before="unaware",
+                thread_awareness_after="per-monitor-v2",
+                process_awareness_before=0,
+                process_awareness_after=PROCESS_PER_MONITOR_DPI_AWARE,
+                successful_method="SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)",
+                attempt_log=(),
+                manifest_likely=False,
+            ),
+        ),
         patch(
             "now_playing_desktops.platforms.windows_diag.collect_windows_diag_report",
             return_value=fake_report,

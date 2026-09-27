@@ -58,6 +58,16 @@ class MonitorInfo:
     rect_top: int = 0
 
 
+def monitor_device_name_from_szdevice(sz_device: object) -> str:
+    """Read ``MONITORINFOEXW.szDevice`` (ctypes may expose it as ``str`` or a WCHAR buffer)."""
+    if isinstance(sz_device, str):
+        return sz_device
+    value = getattr(sz_device, "value", sz_device)
+    if isinstance(value, str):
+        return value
+    return str(value)
+
+
 def monitor_size_from_rect(left: int, top: int, right: int, bottom: int) -> tuple[int, int]:
     """Return pixel width and height from a Win32 RECT (origin may be negative)."""
     return right - left, bottom - top
@@ -308,7 +318,9 @@ def enumerate_monitors() -> list[MonitorInfo]:
     fallback_w, fallback_h = primary_screen_pixel_size()
     collected: list[MonitorInfo] = []
 
-    @ctypes.WINFUNCTYPE(
+    _callback_type = getattr(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE)
+
+    @_callback_type(
         wintypes.BOOL,
         wintypes.HMONITOR,
         wintypes.HDC,
@@ -320,19 +332,62 @@ def enumerate_monitors() -> list[MonitorInfo]:
         info.cbSize = ctypes.sizeof(_MONITORINFOEXW)
         if not user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
             return True
-        device = str(info.szDevice.value)
-        monitor = monitor_info_from_win32(
-            int(hmonitor),
-            info,
-            fallback_width=fallback_w,
-            fallback_height=fallback_h,
-            device_name=device,
-        )
+        device = ""
+        try:
+            device = monitor_device_name_from_szdevice(info.szDevice)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Could not read monitor device name for hmonitor=%s: %s",
+                hmonitor,
+                exc,
+                exc_info=True,
+            )
+        try:
+            monitor = monitor_info_from_win32(
+                int(hmonitor),
+                info,
+                fallback_width=fallback_w,
+                fallback_height=fallback_h,
+                device_name=device,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "EnumDisplayMonitors callback failed for hmonitor=%s: %s",
+                hmonitor,
+                exc,
+                exc_info=True,
+            )
+            rect = info.rcMonitor
+            rect_w, rect_h = monitor_size_from_rect(
+                rect.left,
+                rect.top,
+                rect.right,
+                rect.bottom,
+            )
+            width, height, _ = ensure_positive_monitor_size(
+                rect_w,
+                rect_h,
+                fallback_width=fallback_w,
+                fallback_height=fallback_h,
+            )
+            monitor = MonitorInfo(
+                monitor_id=str(int(hmonitor)),
+                width=width,
+                height=height,
+                is_primary=bool(info.dwFlags & MONITORINFOF_PRIMARY),
+                left=int(rect.left),
+                top=int(rect.top),
+                device_name=device,
+                rect_width=rect_w,
+                rect_height=rect_h,
+                rect_left=int(rect.left),
+                rect_top=int(rect.top),
+            )
         collected.append(monitor)
-        if sys.platform == "win32":
+        if sys.platform == "win32" and monitor.device_name:
             from now_playing_desktops.platforms import windows_com
 
-            windows_com.register_monitor_device(monitor.monitor_id, device)
+            windows_com.register_monitor_device(monitor.monitor_id, monitor.device_name)
         return True
 
     user32.EnumDisplayMonitors(0, 0, callback, 0)

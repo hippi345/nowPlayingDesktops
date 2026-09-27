@@ -33,6 +33,12 @@ class MonitorDiagRow:
 class WindowsDiagReport:
     monitors: list[MonitorDiagRow]
     per_monitor_com: bool
+    com_probe_detail: str
+    dpi_successful_method: str | None
+    dpi_attempt_log: tuple[str, ...]
+    dpi_manifest_likely: bool
+    dpi_thread_before: str
+    dpi_thread_after: str
     canvas_size: tuple[int, int]
     virtual_span: bool
     style_would_write: str
@@ -50,6 +56,12 @@ def collect_windows_diag_report() -> WindowsDiagReport:
         return WindowsDiagReport(
             monitors=[],
             per_monitor_com=False,
+            com_probe_detail="non-win32",
+            dpi_successful_method="non-win32 stub",
+            dpi_attempt_log=(),
+            dpi_manifest_likely=False,
+            dpi_thread_before="per-monitor-v2 (non-win32 stub)",
+            dpi_thread_after="per-monitor-v2 (non-win32 stub)",
             canvas_size=(1920, 1080),
             virtual_span=False,
             style_would_write="10",
@@ -60,8 +72,12 @@ def collect_windows_diag_report() -> WindowsDiagReport:
         )
 
     from now_playing_desktops.platforms.windows import WindowsWallpaperPlatform
-    from now_playing_desktops.platforms.windows_com import idesktop_wallpaper_available
-    from now_playing_desktops.platforms.windows_dpi import describe_thread_dpi_awareness_context
+    from now_playing_desktops.platforms.windows_com import (
+        idesktop_wallpaper_probe,
+    )
+    from now_playing_desktops.platforms.windows_dpi import (
+        bootstrap_process_dpi_awareness,
+    )
     from now_playing_desktops.platforms.windows_monitors import (
         compose_canvas_pixel_size,
         enumerate_monitors,
@@ -72,14 +88,14 @@ def collect_windows_diag_report() -> WindowsDiagReport:
         read_applied_wallpaper_style,
     )
 
-    set_process_dpi_aware()
+    dpi_bootstrap = bootstrap_process_dpi_awareness()
     monitors = enumerate_monitors()
-    awareness = describe_thread_dpi_awareness_context()
+    awareness = dpi_bootstrap.thread_awareness_after
     rows: list[MonitorDiagRow] = []
     for monitor in monitors:
         rows.append(_monitor_row(monitor, awareness))
 
-    per_monitor = idesktop_wallpaper_available()
+    per_monitor, com_detail = idesktop_wallpaper_probe()
     virtual_span = len(monitors) > 1 and not per_monitor
     canvas_w, canvas_h = compose_canvas_pixel_size(monitors)
     style = WALLPAPER_STYLE_SPAN if virtual_span else WALLPAPER_STYLE_FILL
@@ -96,6 +112,12 @@ def collect_windows_diag_report() -> WindowsDiagReport:
     return WindowsDiagReport(
         monitors=rows,
         per_monitor_com=per_monitor,
+        com_probe_detail=com_detail,
+        dpi_successful_method=dpi_bootstrap.successful_method,
+        dpi_attempt_log=dpi_bootstrap.attempt_log,
+        dpi_manifest_likely=dpi_bootstrap.manifest_likely,
+        dpi_thread_before=dpi_bootstrap.thread_awareness_before,
+        dpi_thread_after=dpi_bootstrap.thread_awareness_after,
         canvas_size=(canvas_w, canvas_h),
         virtual_span=virtual_span,
         style_would_write=style,
@@ -152,7 +174,16 @@ def set_process_dpi_aware() -> None:
 def format_windows_diag_report(report: WindowsDiagReport) -> str:
     lines: list[str] = []
     lines.append("now-playing Windows diagnostics")
+    dpi_method = report.dpi_successful_method or "(none — still unaware)"
+    lines.append(f"DPI bootstrap: {dpi_method}")
+    lines.append(f"DPI thread awareness: {report.dpi_thread_before} -> {report.dpi_thread_after}")
+    if report.dpi_manifest_likely:
+        lines.append("DPI manifest: likely set via application manifest (or prior bootstrap)")
+    for attempt in report.dpi_attempt_log:
+        lines.append(f"DPI attempt: {attempt}")
     lines.append(f"IDesktopWallpaper per-monitor: {report.per_monitor_com}")
+    if not report.per_monitor_com or report.com_probe_detail:
+        lines.append(f"IDesktopWallpaper probe: {report.com_probe_detail}")
     lines.append(f"Log file: {report.log_file_path}")
     for row in report.monitors:
         dm = f"{row.dm_pels_size[0]}x{row.dm_pels_size[1]}" if row.dm_pels_size else "unavailable"

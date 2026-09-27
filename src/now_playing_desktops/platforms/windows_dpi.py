@@ -6,6 +6,7 @@ import ctypes
 import logging
 import sys
 from ctypes import wintypes
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -27,14 +28,6 @@ DPI_AWARENESS_UNAWARE = 0
 DPI_AWARENESS_SYSTEM_AWARE = 1
 DPI_AWARENESS_PER_MONITOR_AWARE = 2
 DPI_AWARENESS_PER_MONITOR_AWARE_V2 = 3
-
-if sys.platform == "win32":
-    user32 = ctypes.windll.user32
-    gdi32 = ctypes.windll.gdi32
-else:
-    user32 = None  # type: ignore[assignment]
-    gdi32 = None  # type: ignore[assignment]
-
 
 class DEVMODEW(ctypes.Structure):
     """Win32 ``DEVMODEW`` layout for ``EnumDisplaySettingsW`` (display fields)."""
@@ -65,24 +58,117 @@ class DEVMODEW(ctypes.Structure):
     ]
 
 
-def set_process_dpi_aware() -> None:
-    """Enable per-monitor DPI awareness (v2 when available) before any size queries."""
-    import contextlib
+if sys.platform == "win32":
+    user32 = ctypes.windll.user32
+    gdi32 = ctypes.windll.gdi32
+    kernel32 = ctypes.windll.kernel32
+else:
+    user32 = None  # type: ignore[assignment]
+    gdi32 = None  # type: ignore[assignment]
+    kernel32 = None  # type: ignore[assignment]
+
+
+@dataclass(frozen=True)
+class DpiAwarenessBootstrapResult:
+    thread_awareness_before: str
+    thread_awareness_after: str
+    process_awareness_before: int
+    process_awareness_after: int
+    successful_method: str | None
+    attempt_log: tuple[str, ...]
+    manifest_likely: bool
+
+
+def _get_last_error() -> int:
+    if kernel32 is None:
+        return 0
+    return int(kernel32.GetLastError())
+
+
+def bootstrap_process_dpi_awareness() -> DpiAwarenessBootstrapResult:
+    """Set DPI awareness and return a diagnostic trace (for ``diag`` and logging)."""
+    before_thread = describe_thread_dpi_awareness_context()
+    before_process = get_process_dpi_awareness()
+    attempts: list[str] = []
+    successful: str | None = None
+    manifest_likely = before_process != PROCESS_DPI_UNAWARE or before_thread not in {
+        "unaware",
+        "unaware(process)",
+    }
 
     if sys.platform != "win32" or user32 is None:
-        return
+        return DpiAwarenessBootstrapResult(
+            thread_awareness_before=before_thread,
+            thread_awareness_after=before_thread,
+            process_awareness_before=before_process,
+            process_awareness_after=before_process,
+            successful_method="non-win32 stub",
+            attempt_log=tuple(attempts),
+            manifest_likely=manifest_likely,
+        )
+
     try:
-        user32.SetProcessDpiAwarenessContext(_DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)
-        logger.debug("SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2) succeeded")
-        return
-    except (AttributeError, OSError, TypeError):
-        pass
-    with contextlib.suppress(AttributeError, OSError):
-        ctypes.windll.shcore.SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE)
-        logger.debug("SetProcessDpiAwareness(PER_MONITOR_DPI_AWARE) succeeded")
-    with contextlib.suppress(AttributeError, OSError):
-        user32.SetProcessDPIAware()
-        logger.debug("SetProcessDPIAware() succeeded")
+        if user32.SetProcessDpiAwarenessContext(_DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2):
+            successful = "SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2)"
+            attempts.append(f"{successful}=ok")
+        else:
+            err = _get_last_error()
+            attempts.append(
+                f"SetProcessDpiAwarenessContext(PER_MONITOR_AWARE_V2) failed GetLastError={err}",
+            )
+    except (AttributeError, OSError, TypeError) as exc:
+        attempts.append(f"SetProcessDpiAwarenessContext unavailable: {exc}")
+
+    if successful is None:
+        try:
+            shcore = ctypes.windll.shcore
+            hr = shcore.SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE)
+            if hr == 0:
+                successful = "SetProcessDpiAwareness(PER_MONITOR_DPI_AWARE)"
+                attempts.append(f"{successful}=ok")
+            else:
+                attempts.append(f"SetProcessDpiAwareness failed HRESULT=0x{hr & 0xFFFFFFFF:08X}")
+        except (AttributeError, OSError, TypeError) as exc:
+            attempts.append(f"SetProcessDpiAwareness unavailable: {exc}")
+
+    if successful is None:
+        try:
+            if user32.SetProcessDPIAware():
+                successful = "SetProcessDPIAware()"
+                attempts.append(f"{successful}=ok")
+            else:
+                attempts.append(f"SetProcessDPIAware() failed GetLastError={_get_last_error()}")
+        except (AttributeError, OSError, TypeError) as exc:
+            attempts.append(f"SetProcessDPIAware unavailable: {exc}")
+
+    after_thread = describe_thread_dpi_awareness_context()
+    after_process = get_process_dpi_awareness()
+    if successful is None and after_thread != "unaware":
+        successful = "already-aware (manifest or prior bootstrap)"
+        manifest_likely = True
+    elif successful is not None and before_process != PROCESS_DPI_UNAWARE and successful.startswith(
+        "SetProcess",
+    ):
+        manifest_likely = False
+
+    return DpiAwarenessBootstrapResult(
+        thread_awareness_before=before_thread,
+        thread_awareness_after=after_thread,
+        process_awareness_before=before_process,
+        process_awareness_after=after_process,
+        successful_method=successful,
+        attempt_log=tuple(attempts),
+        manifest_likely=manifest_likely,
+    )
+
+
+def set_process_dpi_aware() -> None:
+    """Enable per-monitor DPI awareness (v2 when available) before any size queries."""
+    result = bootstrap_process_dpi_awareness()
+    if result.successful_method:
+        logger.debug("DPI bootstrap: %s", result.successful_method)
+    for line in result.attempt_log:
+        logger.debug("DPI bootstrap attempt: %s", line)
 
 
 def get_process_dpi_awareness() -> int:
