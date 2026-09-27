@@ -1,33 +1,69 @@
-"""Spotify API helpers for current-track album art."""
+"""Spotify API helpers for current-track album art and playback state."""
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import requests
 import spotipy
+from spotipy.exceptions import SpotifyException
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class TrackPlayback:
+    track_id: str
+    art_url: str
+    title: str
+    artist: str
+    is_playing: bool
 
 
 def pick_album_image_url(images: list[dict[str, Any]]) -> str | None:
-    """Return a reasonable album cover URL from Spotify's images list."""
+    """Return the largest album cover URL from Spotify's images list."""
     if not images:
         return None
-    # Original scripts used index 1 (medium); fall back to largest (index 0).
-    if len(images) > 1:
-        return images[1].get("url")
     return images[0].get("url")
+
+
+def parse_playing_track(payload: dict[str, Any] | None) -> TrackPlayback | None:
+    if not payload or not payload.get("item"):
+        return None
+    item = payload["item"]
+    track_id = item.get("id")
+    album = item.get("album") or {}
+    art_url = pick_album_image_url(album.get("images") or [])
+    if not track_id or not art_url:
+        return None
+    title = item.get("name") or "Unknown Title"
+    artists = item.get("artists") or []
+    artist = ", ".join(a.get("name", "") for a in artists if a.get("name")) or "Unknown Artist"
+    is_playing = bool(payload.get("is_playing"))
+    return TrackPlayback(
+        track_id=track_id,
+        art_url=art_url,
+        title=title,
+        artist=artist,
+        is_playing=is_playing,
+    )
+
+
+def fetch_current_playback(sp: spotipy.Spotify) -> TrackPlayback | None:
+    """Fetch structured playback info for the user's current track, if any."""
+    results = sp.current_user_playing_track()
+    return parse_playing_track(results)
 
 
 def current_album_art_url(sp: spotipy.Spotify) -> str | None:
     """Fetch the album art URL for the user's currently playing track, if any."""
-    results = sp.current_user_playing_track()
-    if not results or not results.get("item"):
-        return None
-    album = results["item"].get("album") or {}
-    return pick_album_image_url(album.get("images") or [])
+    track = fetch_current_playback(sp)
+    return track.art_url if track else None
 
 
 def download_album_art(
@@ -46,6 +82,67 @@ def download_album_art(
                 handle.write(chunk)
 
 
+def _retry_after_seconds(exc: SpotifyException) -> float | None:
+    headers = exc.headers or {}
+    retry_after = headers.get("Retry-After") or headers.get("retry-after")
+    if retry_after is None:
+        return None
+    try:
+        return float(retry_after)
+    except (TypeError, ValueError):
+        return None
+
+
+def fetch_playback_with_backoff(
+    sp: spotipy.Spotify,
+    *,
+    attempt: int = 0,
+    max_attempts: int = 5,
+    on_token_refresh: Callable[[], None] | None = None,
+) -> TrackPlayback | None:
+    """Call Spotify with retries for rate limits, network errors, and token refresh."""
+    try:
+        return fetch_current_playback(sp)
+    except SpotifyException as exc:
+        if exc.http_status == 429:
+            wait = _retry_after_seconds(exc) or min(60.0, 2.0**attempt)
+            logger.warning("Spotify rate limited (429); sleeping %.1fs", wait)
+            time.sleep(wait)
+            if attempt + 1 < max_attempts:
+                return fetch_playback_with_backoff(
+                    sp,
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                    on_token_refresh=on_token_refresh,
+                )
+            return None
+        if exc.http_status in {401, 403} and on_token_refresh and attempt + 1 < max_attempts:
+            logger.info("Refreshing Spotify token after HTTP %s", exc.http_status)
+            on_token_refresh()
+            wait = min(30.0, 2.0**attempt)
+            time.sleep(wait)
+            return fetch_playback_with_backoff(
+                sp,
+                attempt=attempt + 1,
+                max_attempts=max_attempts,
+                on_token_refresh=on_token_refresh,
+            )
+        logger.warning("Spotify API error: %s", exc)
+        return None
+    except requests.RequestException as exc:
+        wait = min(30.0, 2.0**attempt)
+        logger.warning("Network error talking to Spotify: %s; sleeping %.1fs", exc, wait)
+        time.sleep(wait)
+        if attempt + 1 < max_attempts:
+            return fetch_playback_with_backoff(
+                sp,
+                attempt=attempt + 1,
+                max_attempts=max_attempts,
+                on_token_refresh=on_token_refresh,
+            )
+        return None
+
+
 def poll_and_update_wallpaper(
     sp: spotipy.Spotify,
     *,
@@ -55,9 +152,10 @@ def poll_and_update_wallpaper(
     after_update: Callable[[Path], None] | None = None,
     session: requests.Session | None = None,
 ) -> None:
-    """Poll Spotify and refresh the desktop wallpaper on each interval when art is available."""
+    """Legacy poll loop used by older tests; prefer :mod:`now_playing_desktops.runner`."""
     while True:
-        url = current_album_art_url(sp)
+        track = fetch_current_playback(sp)
+        url = track.art_url if track and track.is_playing else None
         if url:
             artwork_path = prepare_artwork(url)
             download_album_art(url, artwork_path, session=session)

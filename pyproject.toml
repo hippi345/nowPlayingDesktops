@@ -15,12 +15,14 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: MacOS X",
     "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+    "pillow>=11.0.0,<12",
     "requests>=2.32.0,<3",
     "spotipy>=2.24.0,<3",
 ]
@@ -34,6 +36,7 @@ dev = [
 ]
 
 [project.scripts]
+now-playing = "now_playing_desktops.cli:main"
 now-playing-macos = "now_playing_desktops.cli:main_macos"
 now-playing-windows = "now_playing_desktops.cli:main_windows"
 
@@ -41,11 +44,17 @@ now-playing-windows = "now_playing_desktops.cli:main_windows"
 sources = ["src"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["now_playing_desktops"]
+only-packages = true
+
+[tool.hatch.build.targets.editable]
+dev-mode-dirs = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = [".", "src"]
+markers = [
+    "integration: optional live desktop-tool tests",
+]
 
 [tool.ruff]
 target-version = "py312"
