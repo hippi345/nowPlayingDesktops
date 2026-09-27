@@ -276,9 +276,7 @@ class NowPlayingRunner:
         """Return ``(screen_id, width, height, virtual_desktop_span)`` render jobs."""
         per_screen = self.deps.platform.supports_per_screen_wallpaper()
         if per_screen and len(screens) > 1:
-            return [
-                (screen.screen_id, screen.width, screen.height, False) for screen in screens
-            ]
+            return [(screen.screen_id, screen.width, screen.height, False) for screen in screens]
         if sys.platform == "win32" and len(screens) > 1:
             from now_playing_desktops.platforms.windows_monitors import (
                 MonitorInfo,
