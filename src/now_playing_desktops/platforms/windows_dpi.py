@@ -17,8 +17,14 @@ PROCESS_SYSTEM_DPI_AWARE = 1
 PROCESS_PER_MONITOR_DPI_AWARE = 2
 
 ENUM_CURRENT_SETTINGS = -1
+DM_POSITION = 0x00000020
 DM_PELSWIDTH = 0x80000
 DM_PELSHEIGHT = 0x100000
+
+DPI_AWARENESS_UNAWARE = 0
+DPI_AWARENESS_SYSTEM_AWARE = 1
+DPI_AWARENESS_PER_MONITOR_AWARE = 2
+DPI_AWARENESS_PER_MONITOR_AWARE_V2 = 3
 
 if sys.platform == "win32":
     user32 = ctypes.windll.user32
@@ -29,6 +35,8 @@ else:
 
 
 class DEVMODEW(ctypes.Structure):
+    """Win32 ``DEVMODEW`` layout for ``EnumDisplaySettingsW`` (display fields)."""
+
     _fields_ = [
         ("dmDeviceName", wintypes.WCHAR * 32),
         ("dmSpecVersion", wintypes.WORD),
@@ -36,14 +44,10 @@ class DEVMODEW(ctypes.Structure):
         ("dmSize", wintypes.WORD),
         ("dmDriverExtra", wintypes.WORD),
         ("dmFields", wintypes.DWORD),
-        ("dmOrientation", wintypes.SHORT),
-        ("dmPaperSize", wintypes.SHORT),
-        ("dmPaperLength", wintypes.SHORT),
-        ("dmPaperWidth", wintypes.SHORT),
-        ("dmScale", wintypes.SHORT),
-        ("dmCopies", wintypes.SHORT),
-        ("dmDefaultSource", wintypes.SHORT),
-        ("dmPrintQuality", wintypes.SHORT),
+        ("dmPositionX", wintypes.LONG),
+        ("dmPositionY", wintypes.LONG),
+        ("dmDisplayOrientation", wintypes.DWORD),
+        ("dmDisplayFixedOutput", wintypes.DWORD),
         ("dmColor", wintypes.SHORT),
         ("dmDuplex", wintypes.SHORT),
         ("dmYResolution", wintypes.SHORT),
@@ -54,6 +58,8 @@ class DEVMODEW(ctypes.Structure):
         ("dmBitsPerPel", wintypes.DWORD),
         ("dmPelsWidth", wintypes.DWORD),
         ("dmPelsHeight", wintypes.DWORD),
+        ("dmDisplayFlags", wintypes.DWORD),
+        ("dmDisplayFrequency", wintypes.DWORD),
     ]
 
 
@@ -95,13 +101,44 @@ def is_process_dpi_aware() -> bool:
     return get_process_dpi_awareness() != PROCESS_DPI_UNAWARE
 
 
-def enum_display_settings_pixel_size(device_name: str) -> tuple[int, int] | None:
-    """Return ``dmPelsWidth`` x ``dmPelsHeight`` for a monitor device, if available."""
+def describe_thread_dpi_awareness_context() -> str:
+    """Human-readable DPI awareness for the calling thread (for diagnostics)."""
+    if sys.platform != "win32" or user32 is None:
+        return "per-monitor-v2 (non-win32 stub)"
+    labels = {
+        DPI_AWARENESS_UNAWARE: "unaware",
+        DPI_AWARENESS_SYSTEM_AWARE: "system",
+        DPI_AWARENESS_PER_MONITOR_AWARE: "per-monitor",
+        DPI_AWARENESS_PER_MONITOR_AWARE_V2: "per-monitor-v2",
+    }
+    try:
+        context = user32.GetThreadDpiAwarenessContext()
+        awareness = int(user32.GetAwarenessFromDpiAwarenessContext(context))
+        return labels.get(awareness, f"unknown({awareness})")
+    except (AttributeError, OSError, TypeError):
+        proc = get_process_dpi_awareness()
+        proc_labels = {
+            PROCESS_DPI_UNAWARE: "unaware(process)",
+            PROCESS_SYSTEM_DPI_AWARE: "system(process)",
+            PROCESS_PER_MONITOR_DPI_AWARE: "per-monitor(process)",
+        }
+        return proc_labels.get(proc, f"unknown-process({proc})")
+
+
+def _enum_display_settings_devmode(device_name: str) -> DEVMODEW | None:
     if sys.platform != "win32" or user32 is None:
         return None
     devmode = DEVMODEW()
     devmode.dmSize = ctypes.sizeof(DEVMODEW)
     if not user32.EnumDisplaySettingsW(device_name, ENUM_CURRENT_SETTINGS, ctypes.byref(devmode)):
+        return None
+    return devmode
+
+
+def enum_display_settings_pixel_size(device_name: str) -> tuple[int, int] | None:
+    """Return ``dmPelsWidth`` x ``dmPelsHeight`` for a monitor device, if available."""
+    devmode = _enum_display_settings_devmode(device_name)
+    if devmode is None:
         return None
     if not (devmode.dmFields & DM_PELSWIDTH) or not (devmode.dmFields & DM_PELSHEIGHT):
         return None
@@ -110,6 +147,32 @@ def enum_display_settings_pixel_size(device_name: str) -> tuple[int, int] | None
     if width <= 0 or height <= 0:
         return None
     return width, height
+
+
+def enum_display_settings_monitor_geometry(
+    device_name: str,
+) -> tuple[int, int, int, int] | None:
+    """
+    Return physical width, height, and virtual-desktop origin from ``EnumDisplaySettingsW``.
+
+    Uses ``dmPelsWidth`` / ``dmPelsHeight`` and ``dmPosition`` — not ``GetMonitorInfo`` rects.
+    """
+    devmode = _enum_display_settings_devmode(device_name)
+    if devmode is None:
+        return None
+    if not (devmode.dmFields & DM_PELSWIDTH) or not (devmode.dmFields & DM_PELSHEIGHT):
+        return None
+    width = int(devmode.dmPelsWidth)
+    height = int(devmode.dmPelsHeight)
+    if width <= 0 or height <= 0:
+        return None
+    if devmode.dmFields & DM_POSITION:
+        left = int(devmode.dmPositionX)
+        top = int(devmode.dmPositionY)
+    else:
+        left = 0
+        top = 0
+    return width, height, left, top
 
 
 def physical_pixel_size_from_rect(
@@ -137,19 +200,15 @@ def physical_pixel_size_from_rect(
 
     if native_size is not None:
         native_w, native_h = native_size
-        if (rect_width, rect_height) == (native_w, native_h):
-            return native_w, native_h
-        if scaled == (native_w, native_h):
-            logger.info(
-                "Monitor rect %dx%d is logical; using native %dx%d (dpi=%dx%d)",
-                rect_width,
-                rect_height,
+        if (native_w, native_h) != (rect_width, rect_height):
+            logger.debug(
+                "Prefer EnumDisplaySettings %dx%d over GetMonitorInfo rect %dx%d",
                 native_w,
                 native_h,
-                dpi_x,
-                dpi_y,
+                rect_width,
+                rect_height,
             )
-            return native_w, native_h
+        return native_w, native_h
 
     if (
         not is_process_dpi_aware()

@@ -98,12 +98,16 @@ def test_monitor_info_from_win32_invalid_rect_falls_back():
     info = wm._MONITORINFO()
     info.rcMonitor = wm._RECT(0, 1664, 1109, 0)
     info.dwFlags = wm.MONITORINFOF_PRIMARY
-    monitor = wm.monitor_info_from_win32(
-        1,
-        info,
-        fallback_width=1664,
-        fallback_height=1109,
-    )
+    with patch(
+        "now_playing_desktops.platforms.windows_dpi.enum_display_settings_monitor_geometry",
+        return_value=None,
+    ):
+        monitor = wm.monitor_info_from_win32(
+            1,
+            info,
+            fallback_width=1664,
+            fallback_height=1109,
+        )
     assert monitor.width == 1664
     assert monitor.height == 1109
 
@@ -135,6 +139,10 @@ def test_enumerate_monitors_uses_get_monitor_info_not_lprect():
     with (
         patch("now_playing_desktops.platforms.windows_monitors.user32", fake_user32),
         patch("now_playing_desktops.platforms.windows_monitors.set_process_dpi_aware"),
+        patch(
+            "now_playing_desktops.platforms.windows_dpi.enum_display_settings_monitor_geometry",
+            return_value=(1664, 1109, 0, 0),
+        ),
     ):
         monitors = enumerate_monitors()
 

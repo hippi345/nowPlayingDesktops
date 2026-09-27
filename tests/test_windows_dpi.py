@@ -11,7 +11,6 @@ from now_playing_desktops.platforms.windows_dpi import (
     set_process_dpi_aware,
 )
 from now_playing_desktops.platforms.windows_restore import (
-    WALLPAPER_STYLE_CENTER,
     WALLPAPER_STYLE_FILL,
     apply_windows_wallpaper_style_for_image,
 )
@@ -38,7 +37,7 @@ def test_set_process_dpi_aware_does_not_raise():
     ), "unexpected GetProcessDpiAwareness value"
 
 
-def test_apply_style_center_for_exact_size_bitmap():
+def test_apply_style_always_fill_even_for_exact_size_bitmap():
     with (
         patch.object(sys, "platform", "win32"),
         patch("now_playing_desktops.platforms.windows_restore.winreg") as winreg_mock,
@@ -49,9 +48,9 @@ def test_apply_style_center_for_exact_size_bitmap():
             monitor_width=2496,
             monitor_height=1664,
         )
-    assert style == WALLPAPER_STYLE_CENTER
+    assert style == WALLPAPER_STYLE_FILL
     values = {call.args[1]: call.args[4] for call in winreg_mock.SetValueEx.call_args_list}
-    assert values["WallpaperStyle"] == WALLPAPER_STYLE_CENTER
+    assert values["WallpaperStyle"] == WALLPAPER_STYLE_FILL
 
 
 def test_apply_style_fill_when_sizes_differ():

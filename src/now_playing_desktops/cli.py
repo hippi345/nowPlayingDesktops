@@ -7,6 +7,13 @@ import logging
 import sys
 from pathlib import Path
 
+if sys.platform == "win32":
+    from now_playing_desktops.platforms.windows_dpi import (
+        set_process_dpi_aware as _win32_dpi_bootstrap,
+    )
+
+    _win32_dpi_bootstrap()
+
 from now_playing_desktops.auth import create_spotify_client
 from now_playing_desktops.config import (
     DEFAULT_POLL_INTERVAL_SECONDS,
@@ -236,7 +243,7 @@ def _ensure_runtime_working_directory() -> None:
 
 def main(argv: list[str] | None = None) -> int:
     if sys.platform == "win32":
-        from now_playing_desktops.platforms.windows_monitors import set_process_dpi_aware
+        from now_playing_desktops.platforms.windows_dpi import set_process_dpi_aware
 
         set_process_dpi_aware()
     argv = list(argv) if argv is not None else sys.argv[1:]
@@ -272,6 +279,10 @@ def main_macos() -> None:
 
 def main_windows() -> None:
     """Legacy console script entry point."""
+    if sys.platform == "win32":
+        from now_playing_desktops.platforms.windows_dpi import set_process_dpi_aware
+
+        set_process_dpi_aware()
     raise SystemExit(main(_legacy_argv()))
 
 

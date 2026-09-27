@@ -12,8 +12,11 @@ from now_playing_desktops.platforms.base import ScreenInfo
 
 if sys.platform == "win32":
     import winreg
+
+    from now_playing_desktops.platforms.windows_restore import WALLPAPER_STYLE_SPAN
 else:  # pragma: no cover
     winreg = None  # type: ignore[assignment]
+    WALLPAPER_STYLE_SPAN = "22"
 
 logger = logging.getLogger(__name__)
 
@@ -58,20 +61,21 @@ class WindowsWallpaperPlatform:
             image_w, image_h = image.size
         if virtual_desktop_span:
             apply_windows_span_wallpaper_style()
-        elif screen_id is not None and self._per_monitor:
-            apply_windows_wallpaper_style_for_image(
-                image_width=image_w,
-                image_height=image_h,
-                monitor_width=monitor_w,
-                monitor_height=monitor_h,
-            )
+            style_written = WALLPAPER_STYLE_SPAN
         else:
-            apply_windows_wallpaper_style_for_image(
+            style_written = apply_windows_wallpaper_style_for_image(
                 image_width=image_w,
                 image_height=image_h,
                 monitor_width=monitor_w,
                 monitor_height=monitor_h,
             )
+        self._log_wallpaper_apply(
+            screen_id=screen_id,
+            image_width=image_w,
+            image_height=image_h,
+            wallpaper_style=style_written,
+            virtual_desktop_span=virtual_desktop_span,
+        )
         if screen_id is not None and self._per_monitor:
             _set_wallpaper_on_monitor(path_str, screen_id)
             return
@@ -125,6 +129,71 @@ class WindowsWallpaperPlatform:
         if monitors:
             return compose_canvas_pixel_size(monitors)
         return largest_monitor_pixel_size(monitors)
+
+    def _log_wallpaper_apply(
+        self,
+        *,
+        screen_id: str | None,
+        image_width: int,
+        image_height: int,
+        wallpaper_style: str,
+        virtual_desktop_span: bool,
+    ) -> None:
+        if sys.platform != "win32":
+            return
+        from now_playing_desktops.platforms.windows_dpi import describe_thread_dpi_awareness_context
+        from now_playing_desktops.platforms.windows_monitors import (
+            MonitorInfo,
+            enumerate_monitors,
+            log_wallpaper_apply_for_monitor,
+        )
+
+        monitors = enumerate_monitors()
+        if virtual_desktop_span:
+            from now_playing_desktops.platforms.windows_monitors import compose_canvas_pixel_size
+
+            canvas_w, canvas_h = compose_canvas_pixel_size(monitors)
+            logger.info(
+                "Wallpaper apply virtual span canvas=%dx%d style=%s awareness=%s",
+                canvas_w,
+                canvas_h,
+                wallpaper_style,
+                describe_thread_dpi_awareness_context(),
+            )
+            for monitor in monitors:
+                log_wallpaper_apply_for_monitor(
+                    monitor=monitor,
+                    composed_width=canvas_w,
+                    composed_height=canvas_h,
+                    wallpaper_style=wallpaper_style,
+                )
+            return
+        target_id = screen_id
+        if target_id is None:
+            primary = next((m for m in monitors if m.is_primary), monitors[0] if monitors else None)
+            if primary is None:
+                return
+            target_id = primary.monitor_id
+        for monitor in monitors:
+            if monitor.monitor_id == target_id:
+                log_wallpaper_apply_for_monitor(
+                    monitor=monitor,
+                    composed_width=image_width,
+                    composed_height=image_height,
+                    wallpaper_style=wallpaper_style,
+                )
+                return
+        log_wallpaper_apply_for_monitor(
+            monitor=MonitorInfo(
+                monitor_id=target_id or "0",
+                width=image_width,
+                height=image_height,
+                is_primary=True,
+            ),
+            composed_width=image_width,
+            composed_height=image_height,
+            wallpaper_style=wallpaper_style,
+        )
 
     def list_screens(self) -> list[ScreenInfo]:
         if sys.platform != "win32":

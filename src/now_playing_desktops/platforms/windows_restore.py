@@ -185,15 +185,8 @@ def apply_windows_wallpaper_style_for_image(
     monitor_width: int,
     monitor_height: int,
 ) -> str:
-    """Pick Fill vs Center so exact-size renders are not upscaled by the shell."""
-    if (
-        image_width == monitor_width
-        and image_height == monitor_height
-        and image_width > 0
-        and image_height > 0
-    ):
-        apply_windows_center_wallpaper_style()
-        return WALLPAPER_STYLE_CENTER
+    """Always use Fill so a size mismatch never shows black borders (Center is never used)."""
+    del image_width, image_height, monitor_width, monitor_height
     apply_windows_fill_wallpaper_style()
     return WALLPAPER_STYLE_FILL
 

@@ -55,6 +55,9 @@ def _desktop_wallpaper_interface():
     )
 
 
+_DWPOS_FILL = 5
+
+
 def set_wallpaper_for_monitor(monitor_id: str, path: str) -> None:
     if not idesktop_wallpaper_available():
         raise OSError("IDesktopWallpaper is not available")
@@ -62,8 +65,13 @@ def set_wallpaper_for_monitor(monitor_id: str, path: str) -> None:
     if not device:
         raise OSError(f"No device name registered for monitor {monitor_id}")
     wallpaper = _desktop_wallpaper_interface()
+    wallpaper.SetPosition(_DWPOS_FILL)
     wallpaper.SetWallpaper(device, path)
-    logger.debug("IDesktopWallpaper.SetWallpaper(%s, %s)", device, path)
+    logger.debug(
+        "IDesktopWallpaper.SetPosition(FILL) SetWallpaper(%s, %s)",
+        device,
+        path,
+    )
 
 
 def get_wallpaper_for_monitor(monitor_id: str) -> str | None:
