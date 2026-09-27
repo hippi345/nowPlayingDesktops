@@ -140,7 +140,7 @@ def test_windows_run_key_integration(tmp_path: Path, monkeypatch):
             winreg.HKEY_CURRENT_USER,
             r"Software\Microsoft\Windows\CurrentVersion\Run",
         ) as key:
-            reg_type, value = winreg.QueryValueEx(key, test_name)
+            value, reg_type = winreg.QueryValueEx(key, test_name)
         assert reg_type == winreg.REG_SZ
         assert "--env-file" in value
         assert str(env_file) in value
