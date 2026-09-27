@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
+from now_playing_desktops.platforms import windows as win_platform
 from now_playing_desktops.platforms.base import ScreenInfo
 from now_playing_desktops.platforms.windows import WindowsWallpaperPlatform
 from now_playing_desktops.platforms.windows_monitors import MonitorInfo, compose_canvas_pixel_size
@@ -130,8 +131,8 @@ def test_apply_windows_span_wallpaper_style_writes_registry():
 def test_set_wallpaper_virtual_span_uses_span_style(tmp_path: Path):
     image = tmp_path / "span.png"
     Image.new("RGB", (4480, 1440), (30, 30, 30)).save(image)
-    fake_user32 = __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock()
-    fake_user32.SystemParametersInfoW.return_value = 1
+    fake_windll = MagicMock()
+    fake_windll.user32.SystemParametersInfoW.return_value = 1
     with (
         patch.object(sys, "platform", "win32"),
         patch("now_playing_desktops.platforms.windows_monitors.set_process_dpi_aware"),
@@ -148,10 +149,7 @@ def test_set_wallpaper_virtual_span_uses_span_style(tmp_path: Path):
         patch(
             "now_playing_desktops.platforms.windows_restore.apply_windows_span_wallpaper_style",
         ) as span_mock,
-        patch(
-            "now_playing_desktops.platforms.windows.ctypes.windll.user32",
-            fake_user32,
-        ),
+        patch.object(win_platform.ctypes, "windll", fake_windll, create=True),
     ):
         platform = WindowsWallpaperPlatform()
         platform.set_wallpaper(image, virtual_desktop_span=True)
