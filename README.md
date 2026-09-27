@@ -5,13 +5,28 @@
 
 Set your desktop wallpaper to the album art of whatever you are playing on Spotify (or another supported desktop player in **local** mode).
 
+## Screenshots
+
+<p>
+  <img src="docs/screenshot-weston-estate.png" width="49%" alt="Now-playing wallpaper: Weston Estate, Is this the End?" />
+  <img src="docs/screenshot-lucky-daye.png" width="49%" alt="Now-playing wallpaper: Lucky Daye, Nowhere Fast" />
+</p>
+
 ## Which mode should I pick?
 
 | Mode | Command | What it needs | Players / devices | Account / app setup | Pros | Cons |
 |------|---------|---------------|-------------------|----------------------|------|------|
-| **Local** | `--source local` | Python 3.12+, platform extras (see below), media app **playing on this computer** | Spotify desktop (Windows SMTC, Linux MPRIS, macOS AppleScript); other MPRIS players on Linux may work if they expose metadata | None | No Spotify Developer app; no OAuth; works offline for playback detection | Art is often a small system thumbnail unless online art is enabled; desktop app must be on this machine |
+| **Local** | `--source local` | Python 3.12+, OS extras below, media app **playing on this computer** | Spotify desktop (Windows SMTC, Linux MPRIS, macOS AppleScript); other MPRIS players on Linux may work if they expose metadata | None | No Spotify Developer app; no OAuth; playback detection works offline | Art is often a small system thumbnail unless [online art](#album-art-in-local-mode) is enabled; desktop app must be on this machine |
 | **Spotify** | `--source spotify` | Same Python install + `SPOTIPY_CLIENT_ID` in `.env` | Any device where **your** Spotify account is playing (phone, web, desktop, etc.) | [Spotify Developer](https://developer.spotify.com/dashboard) app; PKCE `login` once; Development mode **user allowlist** (up to 5 users) | High-resolution album art from the Web API | Requires Spotify credentials and allowlisted users in dev mode |
-| **Auto** | `--source auto` (default) | If `SPOTIPY_CLIENT_ID` is set → Spotify mode; otherwise → local | Same as the effective mode | Same as the effective mode | Convenient default when you already have a `.env` | Surprising if you expected local but have a Client ID configured |
+| **Auto** | omit `--source`, or `--source auto`, or `NOW_PLAYING_SOURCE=auto` (default) | Resolves to Spotify or local using the rules below | Same as the **effective** mode | Same as the effective mode | One command whether or not you use the Web API | Surprising if you expected local but have `SPOTIPY_CLIENT_ID` set |
+
+**How `auto` resolves** (see `resolve_effective_playback_source` in `playback_source.py`):
+
+1. `--source spotify` or `NOW_PLAYING_SOURCE=spotify` → **Spotify** Web API.
+2. `--source local` or `NOW_PLAYING_SOURCE=local` → **local** OS media session.
+3. Otherwise (`auto`): if `SPOTIPY_CLIENT_ID` is set and non-empty in the environment (after `.env` load), effective mode is **Spotify**; if not, **local**.
+
+A resolved Spotify run still needs a username (`SPOTIPY_CLIENT_USERNAME` or a `run`/`login` argument) and a usable token cache from `now-playing login` (or legacy client-secret flow). **Online art** (iTunes Search lookups and Spotify art URL downloads) applies to **local** mode by default; see [Album art in local mode](#album-art-in-local-mode).
 
 Legacy console scripts `now-playing-macos` and `now-playing-windows` behave like `now-playing run …` when you omit the `run` subcommand.
 
@@ -19,69 +34,83 @@ Legacy console scripts `now-playing-macos` and `now-playing-windows` behave like
 
 ## Quick Start: Local mode
 
-### Requirements
+Local mode reads playback from the OS media session on **this** machine. Pick your OS:
+
+### Windows (local)
+
+**Prerequisites**
 
 - **Python 3.12+** (`requires-python` in `pyproject.toml`; CI tests 3.12 and 3.13).
-- A **desktop media player** playing on the same machine (Spotify desktop is the primary target).
+- **Install:** `pip install -e ".[windows]"` (WinRT optional deps for SMTC).
+- **Player:** Spotify **desktop** app playing on this PC (System Media Transport Controls).
 
-### Install
+**Run**
 
-```bash
-git clone https://github.com/hippi345/nowPlayingDesktops.git
-cd nowPlayingDesktops
-python3.12 -m venv .venv
-```
-
-Activate the venv:
-
-- **Linux / macOS:** `source .venv/bin/activate`
-- **Windows (PowerShell):** `.\.venv\Scripts\Activate.ps1`
-
-Install with the extras for your OS (add `dev` if you are developing):
-
-| OS | Install command |
-|----|-----------------|
-| **Windows** | `pip install -e ".[windows]"` |
-| **macOS** | `pip install -e ".[macos]"` |
-| **Linux** | `pip install -e ".[linux]"` |
-
-### Platform notes for local playback
-
-| OS | How local mode reads playback | Notes |
-|----|----------------------------------|-------|
-| **Windows** | System Media Transport Controls (SMTC) for Spotify | Requires the `[windows]` WinRT optional dependencies |
-| **Linux** | MPRIS over D-Bus (`org.mpris.MediaPlayer2.spotify`) | Requires `[linux]` (`dbus-next`). You need a **D-Bus session** (`echo $DBUS_SESSION_BUS_ADDRESS`). Tools such as `playerctl` are not required by this app, but your player must expose MPRIS. |
-| **macOS** | AppleScript to **Spotify.app** | Requires `[macos]` (`appscript`). macOS may prompt for **Automation** permission for your terminal/Python to control Spotify (System Settings → Privacy & Security → Automation). |
-
-### Run
-
-Start Spotify (or another supported player) and begin playback, then:
-
-```bash
-now-playing run YOUR_SPOTIFY_USERNAME --source local
-```
-
-`YOUR_SPOTIFY_USERNAME` is optional in local mode (it is only required for `--source spotify`). A typical local-only invocation:
-
-```bash
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e ".[windows]"
 now-playing run --source local
 ```
 
-Optional flags you may use with `run`:
+**Nice extra:** When the lock screen is set to use the **same picture as the desktop wallpaper**, the composed tile can appear on the lock screen while a track is playing; it is restored when you pause (same restore path as the desktop).
+
+### Linux (local)
+
+**Prerequisites**
+
+- **Python 3.12+**
+- **Install:** `pip install -e ".[linux]"` (`dbus-next` for MPRIS).
+- **D-Bus session:** `echo $DBUS_SESSION_BUS_ADDRESS` should be set in your desktop session.
+- **Player:** Spotify desktop or another app with **MPRIS** (`org.mpris.MediaPlayer2.*`). `playerctl` is not required by this app.
+- **Wallpaper backend** (one of): GNOME family — `gsettings`; KDE — `plasma-apply-wallpaperimage` and/or `qdbus6` / `qdbus`; other WMs — `feh`, `swaybg`, or `nitrogen` (plus `xrandr` or `wlr-randr` for screen size).
+
+**Run**
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[linux]"
+now-playing run --source local
+```
+
+### macOS (local)
+
+**Prerequisites**
+
+- **Python 3.12+**
+- **Install:** `pip install -e ".[macos]"` (`appscript` for Spotify AppleScript control).
+- **Player:** **Spotify.app** playing on this Mac.
+- **Automation:** macOS may prompt for **Automation** permission for your terminal or Python to control Spotify (System Settings → Privacy & Security → Automation).
+
+**Run**
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[macos]"
+now-playing run --source local
+```
+
+Optional PyObjC (`pyobjc-framework-Cocoa`) improves per-display wallpaper control; without it, `osascript` sets all screens.
+
+### Common `run` flags (local)
 
 - `-v` / `--verbose` — debug logging
 - `--once` — single poll/apply cycle
 - `--env-file PATH` — load settings from a `.env` file
-- `--no-online-art` — do not fetch album art over the internet (see [Album art](#album-art-in-local-mode))
+- `--no-online-art` — no internet art lookups (see [Album art](#album-art-in-local-mode))
 - `--poll-interval SECONDS` — default `2.5`
+
+`YOUR_SPOTIFY_USERNAME` on the command line is **optional** for local mode (only required for `--source spotify`).
 
 ### Login autostart (local)
 
 ```bash
-now-playing autostart enable YOUR_SPOTIFY_USERNAME --source local
+now-playing autostart enable --source local
 ```
 
-`enable` forwards `--source`, `--env-file`, `--no-online-art`, and the username into the registered autostart command (Windows Run key, XDG autostart `.desktop`, or macOS LaunchAgent). Check status with `now-playing autostart status`; remove with `now-playing autostart disable`.
+`enable` forwards `--source`, `--env-file`, `--no-online-art`, and an optional username into the registered autostart command (Windows Run key, XDG autostart `.desktop`, or macOS LaunchAgent). Check status with `now-playing autostart status`; remove with `now-playing autostart disable`.
 
 ---
 
@@ -90,26 +119,24 @@ now-playing autostart enable YOUR_SPOTIFY_USERNAME --source local
 When **online art is enabled** (default), cover resolution is:
 
 1. **System media thumbnail** when available (SMTC on Windows, MPRIS art on Linux, AppleScript artwork URL on macOS — URL download only if online art is enabled).
-2. **[Apple iTunes Search API](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/)** (public HTTPS; no iTunes app or Apple account required) to find higher-resolution artwork when the thumbnail is small.
+2. **[Apple iTunes Search API](https://developer.apple.com/library/archive/documentation/AudioVideo/Conceptual/iTuneSearchAPI/)** (public HTTPS; no iTunes app or Apple account) when the thumbnail is missing or small.
 3. **Generated placeholder** (gradient + track title/artist) if nothing else is available.
 
-A background thread may **upgrade** wallpaper art after the first apply when iTunes returns a larger image for the same playing track (see logs: `Upgraded art Apply took …`).
+If the iTunes lookup fails (network error, no match, timeout), the app logs a warning and **continues** with the system thumbnail or placeholder; the **wallpaper still applies** for that poll. A background thread may **upgrade** wallpaper art after the first apply when iTunes returns a larger image for the same playing track (see logs: `Upgraded art Apply took …`).
 
 ### Disable online art (offline / privacy)
-
-Set in your environment or `.env` file:
 
 ```bash
 NOW_PLAYING_ONLINE_ART=0
 ```
 
-Or pass on the CLI:
+Or on the CLI:
 
 ```bash
 now-playing run --source local --no-online-art
 ```
 
-When disabled: use local thumbnails only, then placeholder; **no** iTunes requests, **no** Spotify art URL downloads, **no** background iTunes upgrader. (Spotify **Web API** mode still uses the network for playback and API album art unless you also use `--no-online-art`, which skips art URL downloads and uses placeholders.)
+When disabled: local thumbnails only, then placeholder; **no** iTunes requests, **no** Spotify art URL downloads, **no** background iTunes upgrader. (Spotify **Web API** mode still uses the network for playback and API album art unless you also pass `--no-online-art`, which skips art URL downloads and uses placeholders.)
 
 The app loads `.env` from (first match wins, without overriding variables already set in the shell):
 
@@ -120,6 +147,31 @@ The app loads `.env` from (first match wins, without overriding variables alread
 ---
 
 ## Quick Start: Spotify mode
+
+Spotify mode uses the Web API (any device). Wallpaper setup is the same on every OS; playback detection does not need the `[windows]` / `[linux]` / `[macos]` extras.
+
+### Windows (Spotify)
+
+**Prerequisites**
+
+- **Python 3.12+**
+- **Install:** `pip install -e .` (base package; wallpaper uses `ctypes` / WinRT desktop APIs already in the main install path).
+- **Spotify Developer** app with **Client ID** in `.env` (see below).
+
+### Linux (Spotify)
+
+**Prerequisites**
+
+- **Python 3.12+**
+- **Install:** `pip install -e .`
+- **Wallpaper backend** (same as local): `gsettings` (GNOME), `plasma-apply-wallpaperimage` / `qdbus6` / `qdbus` (KDE), or `feh` / `swaybg` / `nitrogen` on lightweight WMs.
+
+### macOS (Spotify)
+
+**Prerequisites**
+
+- **Python 3.12+**
+- **Install:** `pip install -e .` (wallpaper via AppKit if PyObjC is installed, otherwise `osascript`).
 
 ### 1. Create a Spotify app
 
@@ -147,6 +199,8 @@ Minimum for PKCE:
 SPOTIPY_CLIENT_ID=your_client_id_here
 SPOTIPY_CLIENT_USERNAME=your_spotify_username
 ```
+
+Optional: `NOW_PLAYING_SOURCE=spotify|local|auto` (default `auto`).
 
 ### 3. Allowlist users (Development mode)
 
@@ -210,8 +264,10 @@ Session state: `wallpaper-state.json` in the config directory. If a previous run
 | Topic | What to do |
 |-------|------------|
 | **`now-playing diag`** | Windows only. Shows effective playback source, what local/Spotify sources see, auth mode, and display/wallpaper geometry. |
-| **Log file** | During `run`, logging goes to a rotating file: `%APPDATA%\now-playing-desktops\logs\now-playing.log` on Windows; the same relative path under the platform config dir on macOS/Linux (`user_config_dir() / "logs" / "now-playing.log"`). |
-| **Single instance** | Only one `now-playing run` at a time. A second instance logs: `Another now-playing run instance is already active (...); exiting` and exits 0. Stop the existing run (Ctrl+C in its terminal) or end that process; on Windows you can find it with `Get-CimInstance Win32_Process` and filter `CommandLine` for `now_playing`. |
+| **Log file** | During `run`, logs go to a rotating file under the config directory: **Windows** `%APPDATA%\now-playing-desktops\logs\now-playing.log`; **macOS** `~/Library/Application Support/now-playing-desktops/logs/now-playing.log`; **Linux** `~/.config/now-playing-desktops/logs/now-playing.log` (`logging_setup.log_file_path()`). |
+| **Pause / resume does not restore or re-apply** | Run with `-v` and inspect the log above. On pause or no session, the runner calls `restore_original_wallpaper()`; on resume it should log `Updated wallpaper for …`. If nothing changes, check whether a **second** `now-playing run` is holding the single-instance lock (below) or whether restore failed (`Failed to apply wallpaper restore snapshot` in the log). |
+| **Single instance** | Only one `now-playing run` at a time. A second instance logs `Another now-playing run instance is already active (...); exiting` and exits **0** without changing the wallpaper. **Stop only the other instance:** Windows — mutex `Local\now-playing-desktops-run` (see `now-playing diag` run-lock lines) or find the process whose command line contains `now_playing_desktops` / `now-playing run`; Linux/macOS — read PID from `run.lock` in the config dir (`~/.config/now-playing-desktops/run.lock` on Linux) and `kill` that PID, or end the terminal session running `run`. Do not delete `run.lock` while the holder is still running. |
+| **Online art lookup failed** | Warning in logs (`iTunes artwork lookup failed` / `Failed to download iTunes artwork`); wallpaper still uses SMTC/MPRIS thumbnail or placeholder. Opt out entirely: `NOW_PLAYING_ONLINE_ART=0` or `--no-online-art`. |
 | **Verbose** | `-v` / `--verbose` on any subcommand that accepts shared flags. |
 | **Compose quality checks** | Set `NOW_PLAYING_COMPOSE_VERIFY=1` to run optional post-apply checks in a background thread (never blocks wallpaper set). |
 | **Apply timing** | Look for `Apply took X.XXs (fetch=…, compose=…, save=…, set=…, cache=hit\|miss)` in logs; background upgrades log `Upgraded art Apply took …`. |
