@@ -335,6 +335,7 @@ def test_linux_autostart_enable_disable(tmp_path: Path, monkeypatch):
             timeout=60,
         )
     else:
+
         def fake_which(name: str) -> str | None:
             if name == "now-playing":
                 return f"{sys.executable} -m now_playing_desktops"
