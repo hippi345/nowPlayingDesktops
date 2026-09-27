@@ -163,10 +163,13 @@ class FehWallpaperBackend:
     def apply_snapshot(self, snapshot: dict[str, Any]) -> None:
         content = snapshot.get("fehbg")
         if content:
+            env = os.environ.copy()
+            env.setdefault("DISPLAY", ":0")
             proc = subprocess.Popen(
                 ["sh", "-c", content],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=env,
             )
             proc.wait(timeout=30)
         elif snapshot.get("path"):
@@ -175,7 +178,14 @@ class FehWallpaperBackend:
     def set_wallpaper(self, path: Path) -> None:
         env = os.environ.copy()
         env.setdefault("DISPLAY", ":0")
-        _run(["feh", "--bg-fill", str(path.resolve())], check=True)
+        subprocess.run(
+            ["feh", "--bg-fill", str(path.resolve())],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
 
     def get_current_wallpaper(self) -> Path | None:
         fehbg = Path.home() / ".fehbg"
@@ -184,8 +194,9 @@ class FehWallpaperBackend:
         text = fehbg.read_text(encoding="utf-8")
         parts = text.split()
         for part in reversed(parts):
-            if part.endswith((".jpg", ".jpeg", ".png", ".webp")):
-                candidate = Path(part.strip("'\""))
+            cleaned = part.strip().strip("'\"")
+            if cleaned.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                candidate = Path(cleaned)
                 if candidate.is_file():
                     return candidate
         return None
