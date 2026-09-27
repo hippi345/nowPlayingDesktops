@@ -118,6 +118,36 @@ def test_low_res_thumbnail_upscaled(caplog):
     assert "Upscaled low-resolution thumbnail" in caplog.text
 
 
+def test_local_without_art_still_applies_wallpaper(tmp_path: Path, caplog):
+    import logging
+
+    platform = FakePlatform(wallpaper=tmp_path / "orig.jpg")
+    (tmp_path / "orig.jpg").write_bytes(b"orig")
+    track = TrackPlayback(
+        track_id="local1",
+        art_url="",
+        title="Song",
+        artist="Artist",
+        is_playing=True,
+    )
+    runner = make_runner(tmp_path, platform=platform)
+    with (
+        patch(
+            "now_playing_desktops.runner.fetch_playback_for_runner",
+            return_value=track,
+        ),
+        patch(
+            "now_playing_desktops.art_resolution.lookup_itunes_artwork_url",
+            return_value=None,
+        ),
+        caplog.at_level(logging.INFO),
+    ):
+        runner.startup()
+        runner.apply_playback_once()
+    assert len(platform.set_calls) == 1
+    assert "Track art source: placeholder" in caplog.text
+
+
 def test_pause_restore_parity_through_shared_pipeline(tmp_path: Path):
     platform = FakePlatform(wallpaper=tmp_path / "orig.jpg")
     (tmp_path / "orig.jpg").write_bytes(b"orig")

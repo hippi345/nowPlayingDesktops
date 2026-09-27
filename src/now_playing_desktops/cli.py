@@ -292,7 +292,14 @@ def _diag(args: argparse.Namespace) -> int:
         print(exc, file=sys.stderr)
         return 1
     username = resolve_spotify_username(getattr(args, "username", None))
-    diag_lines = playback_diag_lines(source_setting=source_setting, username=username)
+    from now_playing_desktops.config import default_cache_dir
+
+    cache_dir = default_cache_dir()
+    diag_lines = playback_diag_lines(
+        source_setting=source_setting,
+        username=username,
+        art_cache_dir=cache_dir / "downloads",
+    )
     report = collect_windows_diag_report()
     print("\n".join([*diag_lines, "", format_windows_diag_report(report)]))
     return 0

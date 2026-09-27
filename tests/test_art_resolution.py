@@ -1,0 +1,172 @@
+from __future__ import annotations
+
+import io
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+from PIL import Image
+
+from now_playing_desktops.art_resolution import (
+    artist_names_match,
+    lookup_itunes_artwork_url,
+    render_placeholder_cover,
+    resolve_track_art,
+)
+from now_playing_desktops.cover_art import load_track_cover
+from now_playing_desktops.playback_types import TrackPlayback
+from now_playing_desktops.sources.local.windows_smtc_thumbnail import (
+    read_random_access_stream_bytes,
+    read_thumbnail_reference_bytes,
+)
+
+
+def _png_bytes(
+    size: tuple[int, int] = (64, 64),
+    color: tuple[int, int, int] = (20, 40, 80),
+) -> bytes:
+    image = Image.new("RGB", size, color)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_artist_names_match_fuzzy():
+    assert artist_names_match("Joyce Wrice", "Joyce Wrice")
+    assert artist_names_match("The Beatles", "Beatles")
+    assert not artist_names_match("Artist A", "Totally Different")
+
+
+def test_resolve_track_art_prefers_smtc_bytes(tmp_path: Path):
+    data = _png_bytes()
+    track = TrackPlayback("id", "", "Title", "Artist", True, art_bytes=data)
+    resolved = resolve_track_art(track, download_dir=tmp_path)
+    assert resolved.source == "smtc_thumbnail"
+    assert resolved.image_bytes == data
+
+
+def test_resolve_track_art_itunes_when_no_bytes(tmp_path: Path):
+    track = TrackPlayback("id", "", "Fly", "Joyce Wrice", True)
+    session = MagicMock()
+    session.get.side_effect = [
+        MagicMock(
+            status_code=200,
+            json=lambda: {
+                "results": [
+                    {
+                        "artistName": "Joyce Wrice",
+                        "artworkUrl100": "https://example.com/100x100bb.jpg",
+                    }
+                ]
+            },
+        ),
+        MagicMock(status_code=200, content=_png_bytes((300, 300))),
+    ]
+    resolved = resolve_track_art(track, download_dir=tmp_path, session=session)
+    assert resolved.source == "itunes"
+    assert resolved.width == 300
+
+
+def test_resolve_track_art_placeholder_when_all_fail(tmp_path: Path):
+    track = TrackPlayback("id", "", "Title", "Artist", True)
+    session = MagicMock()
+    session.get.side_effect = Exception("network down")
+    resolved = resolve_track_art(track, download_dir=tmp_path, session=session)
+    assert resolved.source == "placeholder"
+    assert resolved.width == 1000
+
+
+def test_load_track_cover_never_raises_without_art(tmp_path: Path, caplog):
+    import logging
+
+    track = TrackPlayback("id", "", "Title", "Artist", True)
+    session = MagicMock()
+    session.get.side_effect = Exception("offline")
+    with caplog.at_level(logging.INFO):
+        cover = load_track_cover(track, download_dir=tmp_path, session=session)
+    assert cover.size[0] > 0
+    assert "Track art source: placeholder" in caplog.text
+    assert "Track thumbnail size:" in caplog.text
+
+
+def test_read_thumbnail_reference_retries_empty(monkeypatch):
+    import asyncio
+
+    attempts = {"count": 0}
+
+    class FakeStream:
+        size = 0
+
+    class FakeThumb:
+        async def open_read_async(self):
+            attempts["count"] += 1
+            return FakeStream()
+
+    monkeypatch.setattr(
+        "now_playing_desktops.sources.local.windows_smtc_thumbnail._THUMBNAIL_RETRY_ATTEMPTS",
+        3,
+    )
+    monkeypatch.setattr(
+        "now_playing_desktops.sources.local.windows_smtc_thumbnail._THUMBNAIL_RETRY_DELAY_SECONDS",
+        0,
+    )
+
+    async def _run():
+        result = await read_thumbnail_reference_bytes(FakeThumb(), attempts=3, delay_seconds=0)
+        assert result is None
+        assert attempts["count"] == 3
+
+    asyncio.run(_run())
+
+
+def test_read_random_access_stream_bytes_reads_buffer(monkeypatch):
+    import asyncio
+
+    pytest.importorskip("winrt.windows.storage.streams")
+
+    class FakeReader:
+        def __init__(self, _stream):
+            pass
+
+        async def load_async(self, size):
+            self._size = size
+
+        async def read_bytes_async(self, size):
+            return bytearray(b"abc"[:size])
+
+    class FakeStream:
+        size = 3
+
+    monkeypatch.setattr(
+        "winrt.windows.storage.streams.DataReader",
+        FakeReader,
+    )
+
+    async def _run():
+        data = await read_random_access_stream_bytes(FakeStream())
+        assert data == b"abc"
+
+    asyncio.run(_run())
+
+
+def test_itunes_cache_hit(tmp_path: Path):
+    session = MagicMock()
+    session.get.return_value = MagicMock(
+        status_code=200,
+        json=lambda: {
+            "results": [
+                {"artistName": "Artist", "artworkUrl100": "https://x/100x100bb.png"},
+            ]
+        },
+    )
+    first = lookup_itunes_artwork_url("Artist", "Song", session=session, cache_dir=tmp_path)
+    assert first == "https://x/1000x1000bb.png"
+    session.reset_mock()
+    second = lookup_itunes_artwork_url("Artist", "Song", session=session, cache_dir=tmp_path)
+    assert second == first
+    session.get.assert_not_called()
+
+
+def test_placeholder_cover_renders():
+    image = render_placeholder_cover("Title", "Artist", size=400)
+    assert image.size == (400, 400)
