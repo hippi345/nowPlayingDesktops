@@ -37,6 +37,7 @@ _MAX_WALLPAPER_CHARS = 260
 
 DESKTOP_KEY = r"Control Panel\Desktop"
 WALLPAPER_STYLE_FILL = "10"
+WALLPAPER_STYLE_SPAN = "22"
 TILE_WALLPAPER_OFF = "0"
 COLORS_KEY = r"Control Panel\Colors"
 WALLPAPERS_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers"
@@ -161,15 +162,14 @@ def _pick_wallpaper_source_bytes(
     return None, None
 
 
-def apply_windows_fill_wallpaper_style() -> None:
-    """Force Fill (not Center/Tile) so the bitmap matches the monitor size."""
+def _apply_windows_wallpaper_style(wallpaper_style: str) -> None:
     if winreg is None:
         return
     _write_reg_string(
         winreg.HKEY_CURRENT_USER,
         DESKTOP_KEY,
         "WallpaperStyle",
-        WALLPAPER_STYLE_FILL,
+        wallpaper_style,
     )
     _write_reg_string(
         winreg.HKEY_CURRENT_USER,
@@ -179,9 +179,19 @@ def apply_windows_fill_wallpaper_style() -> None:
     )
     logger.debug(
         "Set WallpaperStyle=%s TileWallpaper=%s before applying wallpaper",
-        WALLPAPER_STYLE_FILL,
+        wallpaper_style,
         TILE_WALLPAPER_OFF,
     )
+
+
+def apply_windows_fill_wallpaper_style() -> None:
+    """Force Fill (not Center/Tile) so the bitmap matches the monitor size."""
+    _apply_windows_wallpaper_style(WALLPAPER_STYLE_FILL)
+
+
+def apply_windows_span_wallpaper_style() -> None:
+    """Force Span across the virtual desktop for multi-monitor SPI bitmaps."""
+    _apply_windows_wallpaper_style(WALLPAPER_STYLE_SPAN)
 
 
 def _read_desktop_style() -> dict[str, str]:

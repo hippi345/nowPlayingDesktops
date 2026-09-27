@@ -39,8 +39,10 @@ class WindowsWallpaperPlatform:
         self._per_monitor = sys.platform == "win32" and idesktop_wallpaper_available()
 
     def set_wallpaper(self, image_path: Path, *, screen_id: str | None = None) -> None:
+        from now_playing_desktops.platforms.windows_monitors import enumerate_monitors
         from now_playing_desktops.platforms.windows_restore import (
             apply_windows_fill_wallpaper_style,
+            apply_windows_span_wallpaper_style,
         )
 
         path_str = str(image_path.resolve())
@@ -48,7 +50,11 @@ class WindowsWallpaperPlatform:
             apply_windows_fill_wallpaper_style()
             _set_wallpaper_on_monitor(path_str, screen_id)
             return
-        apply_windows_fill_wallpaper_style()
+        monitors = enumerate_monitors() if sys.platform == "win32" else []
+        if screen_id is None and len(monitors) > 1:
+            apply_windows_span_wallpaper_style()
+        else:
+            apply_windows_fill_wallpaper_style()
         if not ctypes.windll.user32.SystemParametersInfoW(
             SPI_SETDESKWALLPAPER,
             0,
