@@ -104,7 +104,12 @@ class FakePlatform:
     def supports_per_screen_wallpaper(self) -> bool:
         return False
 
-    def capture_restore_snapshot(self) -> dict:
+    def capture_restore_snapshot(
+        self,
+        *,
+        state_dir: Path | None = None,
+        generated_dir: Path | None = None,
+    ) -> dict:
         return {
             "backend": "fake",
             "path": str(self.wallpaper) if self.wallpaper else None,

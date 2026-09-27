@@ -115,7 +115,12 @@ class MacOSWallpaperPlatform:
     def supports_per_screen_wallpaper(self) -> bool:
         return True
 
-    def capture_restore_snapshot(self) -> dict[str, Any]:
+    def capture_restore_snapshot(
+        self,
+        *,
+        state_dir: Path | None = None,
+        generated_dir: Path | None = None,
+    ) -> dict[str, Any]:
         screens: dict[str, str] = {}
         for screen in self.list_screens():
             current = self.get_current_wallpaper(screen_id=screen.screen_id)
