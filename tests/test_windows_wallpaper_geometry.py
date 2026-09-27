@@ -117,12 +117,14 @@ def test_compose_path_output_matches_requested_monitor_size(tmp_path: Path):
     runner = make_runner(tmp_path, platform=platform)
     track = TrackPlayback("t1", "https://example.com/a.jpg", "Title", "Artist", True)
     with patch(
-        "now_playing_desktops.runner.download_album_art",
+        "now_playing_desktops.runner.load_track_cover",
     ) as download_mock:
         cover_path = tmp_path / "cache" / "downloads" / "t1.jpg"
         cover_path.parent.mkdir(parents=True, exist_ok=True)
         make_sample_cover().save(cover_path)
-        download_mock.side_effect = lambda *_a, **_k: None
+        download_mock.side_effect = lambda track, *, download_dir, session=None: Image.open(
+            cover_path
+        ).convert("RGBA")
         out = runner._compose_path(track, 1664, 1109)
     with Image.open(out) as image:
         assert image.size == (1664, 1109)

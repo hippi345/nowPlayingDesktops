@@ -31,7 +31,7 @@ def test_cli_autostart_enable_passes_env_file(tmp_path: Path):
     with patch("now_playing_desktops.platforms.autostart.enable_autostart") as enable:
         code = main(["autostart", "enable", "myuser", "--env-file", str(env_file)])
     assert code == 0
-    enable.assert_called_once_with(env_file=env_file, username="myuser")
+    enable.assert_called_once_with(env_file=env_file, username="myuser", source=None)
 
 
 def test_cli_autostart_enable_missing_env_reports_message(tmp_path: Path, capsys):
@@ -65,12 +65,16 @@ def test_cli_run_once_loads_env_file_without_shell_env(tmp_path: Path, monkeypat
     runner = MagicMock()
     with (
         patch("now_playing_desktops.cli.get_platform", return_value=MagicMock()),
-        patch("now_playing_desktops.cli.create_spotify_client") as create_client,
+        patch("now_playing_desktops.cli.build_playback_provider") as build_provider,
+        patch(
+            "now_playing_desktops.single_instance.ensure_single_run_instance",
+            return_value=MagicMock(release=MagicMock()),
+        ),
         patch("now_playing_desktops.cli.NowPlayingRunner", return_value=runner),
         patch("now_playing_desktops.cli.default_cache_dir", return_value=tmp_path / "cache"),
         patch("now_playing_desktops.cli.state_file_path", return_value=tmp_path / "state.json"),
     ):
-        create_client.return_value = (MagicMock(), MagicMock(), MagicMock())
+        build_provider.return_value = MagicMock()
         code = main(
             [
                 "run",
@@ -81,5 +85,6 @@ def test_cli_run_once_loads_env_file_without_shell_env(tmp_path: Path, monkeypat
         )
 
     assert code == 0
-    create_client.assert_called_once_with("file-user")
+    build_provider.assert_called_once()
+    assert build_provider.call_args.kwargs["username"] == "file-user"
     runner.startup.assert_called_once()

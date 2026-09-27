@@ -152,7 +152,7 @@ def test_runner_pause_triggers_windows_restore(tmp_path: Path):
     runner = NowPlayingRunner(
         RunnerDeps(
             platform=platform,
-            sp=MagicMock(),
+            playback_provider=MagicMock(),
             cache_dir=tmp_path / "cache",
             state_path=tmp_path / "state.json",
             poll_interval_seconds=2.5,
@@ -165,7 +165,7 @@ def test_runner_pause_triggers_windows_restore(tmp_path: Path):
     ).save(tmp_path / "state.json")
     paused = TrackPlayback("t", "u", "T", "A", is_playing=False)
     with patch(
-        "now_playing_desktops.runner.fetch_playback_with_backoff",
+        "now_playing_desktops.runner.fetch_playback_for_runner",
         return_value=paused,
     ):
         runner.apply_playback_once()

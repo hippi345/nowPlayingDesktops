@@ -69,6 +69,14 @@ def spotify_credentials_configured(*, explicit: Path | None = None) -> bool:
     return bool((values.get("SPOTIPY_CLIENT_ID") or "").strip())
 
 
+def autostart_requires_spotify_credentials(*, source_setting: str) -> bool:
+    """Whether autostart enable needs Spotify OAuth variables in the environment."""
+    from now_playing_desktops.playback_factory import effective_source_name, parse_source_setting
+
+    setting = parse_source_setting(source_setting)
+    return effective_source_name(setting) == "spotify"
+
+
 def default_env_file_hint() -> str:
     """Human-readable location where users should place autostart ``.env`` settings."""
     return str(user_config_dir() / ".env")

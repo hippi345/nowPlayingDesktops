@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from now_playing_desktops.spotify_art import TrackPlayback
 from now_playing_desktops.wallpaper_state import WallpaperSessionState
-from tests.helpers import FakePlatform, make_runner, make_test_cover
+from tests.helpers import FakePlatform, make_runner, make_test_cover, mock_load_track_cover_rgba
 
 PLAYING = TrackPlayback(
     track_id="t1",
@@ -35,12 +35,12 @@ def test_playback_state_machine_play_pause_stop_resume(tmp_path: Path):
 
     with (
         patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PLAYING,
         ),
         patch(
-            "now_playing_desktops.runner.download_album_art",
-            side_effect=lambda _u, dest, session=None: _write_cover_jpeg(dest),
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
         ),
     ):
         runner.startup()
@@ -51,21 +51,21 @@ def test_playback_state_machine_play_pause_stop_resume(tmp_path: Path):
         assert len(platform.set_calls) == 1
 
         with patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PAUSED,
         ):
             runner.apply_playback_once()
         assert platform.wallpaper == original
 
         with patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=None,
         ):
             runner.apply_playback_once()
         assert platform.wallpaper == original
 
         with patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PLAYING,
         ):
             runner.apply_playback_once()
@@ -79,7 +79,7 @@ def test_playback_state_machine_spotify_closed_204_restores(tmp_path: Path):
     platform = FakePlatform(wallpaper=original)
     runner = make_runner(tmp_path, platform=platform)
     runner.startup()
-    with patch("now_playing_desktops.runner.fetch_playback_with_backoff", return_value=None):
+    with patch("now_playing_desktops.runner.fetch_playback_for_runner", return_value=None):
         runner.apply_playback_once()
     assert platform.wallpaper == original
 
@@ -108,12 +108,12 @@ def test_dedupe_no_reset_on_same_track(tmp_path: Path):
     runner = make_runner(tmp_path, platform=platform)
     with (
         patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PLAYING,
         ),
         patch(
-            "now_playing_desktops.runner.download_album_art",
-            side_effect=lambda _u, dest, session=None: _write_cover_jpeg(dest),
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
         ),
     ):
         runner.startup()
@@ -130,7 +130,7 @@ def test_idle_no_original_restore_logged_once(tmp_path: Path, caplog):
     runner = make_runner(tmp_path, platform=platform)
     with (
         patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PAUSED,
         ),
         caplog.at_level(logging.INFO),
@@ -151,7 +151,7 @@ def test_cache_hit_skips_second_download_and_compose(tmp_path: Path):
     original.write_bytes(b"orig")
     platform = FakePlatform(wallpaper=original)
     runner = make_runner(tmp_path, platform=platform)
-    download_mock = MagicMock(side_effect=lambda _u, dest, session=None: _write_cover_jpeg(dest))
+    download_mock = MagicMock(side_effect=mock_load_track_cover_rgba)
     compose_mock = MagicMock(
         side_effect=lambda cover, **kwargs: __import__(
             "now_playing_desktops.composer", fromlist=["compose_wallpaper"]
@@ -159,7 +159,7 @@ def test_cache_hit_skips_second_download_and_compose(tmp_path: Path):
     )
     with (
         patch(
-            "now_playing_desktops.runner.download_album_art",
+            "now_playing_desktops.runner.load_track_cover",
             download_mock,
         ),
         patch(
@@ -230,12 +230,12 @@ def test_second_restore_after_run_reports_nothing(tmp_path: Path, capsys):
 
     with (
         patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PLAYING,
         ),
         patch(
-            "now_playing_desktops.runner.download_album_art",
-            side_effect=lambda _u, dest, session=None: _write_cover_jpeg(dest),
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
         ),
     ):
         runner.startup()

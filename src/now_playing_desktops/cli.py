@@ -14,11 +14,7 @@ if sys.platform == "win32":
 
     _win32_dpi_bootstrap()
 
-from now_playing_desktops.auth import (
-    create_spotify_client,
-    interactive_sign_in,
-    spotify_auth_diag_lines,
-)
+from now_playing_desktops.auth import interactive_sign_in
 from now_playing_desktops.config import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     default_cache_dir,
@@ -28,6 +24,12 @@ from now_playing_desktops.config import (
 from now_playing_desktops.env_loader import load_environment, resolve_spotify_username
 from now_playing_desktops.logging_setup import configure_application_logging
 from now_playing_desktops.platforms import UnsupportedPlatformError, get_platform
+from now_playing_desktops.playback_diag import playback_diag_lines
+from now_playing_desktops.playback_factory import (
+    build_playback_provider,
+    effective_source_name,
+    parse_source_setting,
+)
 from now_playing_desktops.runner import NowPlayingRunner, RunnerDeps
 
 
@@ -61,6 +63,12 @@ def _shared_verbose_parser() -> argparse.ArgumentParser:
         type=Path,
         default=None,
         help="Load Spotify OAuth settings from this .env file (see README).",
+    )
+    shared.add_argument(
+        "--source",
+        choices=("spotify", "local", "auto"),
+        default=None,
+        help="Playback source: spotify Web API, local OS session, or auto (default).",
     )
     return shared
 
@@ -176,29 +184,37 @@ def _run_with_lock(args: argparse.Namespace) -> int:
         print(exc, file=sys.stderr)
         return 1
 
+    try:
+        source_setting = parse_source_setting(getattr(args, "source", None))
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+
     username = resolve_spotify_username(args.username)
-    if username is None:
+    if effective_source_name(source_setting) == "spotify" and username is None:
         print(
-            "Spotify username required: pass it on the command line or set "
+            "Spotify username required for spotify source: pass it on the command line or set "
             "SPOTIPY_CLIENT_USERNAME.",
             file=sys.stderr,
         )
         return 1
-    client_bundle = create_spotify_client(username)
-    if client_bundle is None:
-        print("Can't get token for", username, file=sys.stderr)
+
+    provider = build_playback_provider(source_setting=source_setting, username=username)
+    if provider is None:
+        if effective_source_name(source_setting) == "spotify":
+            print("Can't get Spotify token for", username, file=sys.stderr)
+        else:
+            print("Playback source is unavailable", file=sys.stderr)
         return 1
-    sp, _manager, refresh = client_bundle
 
     cache_dir = args.cache_dir or default_cache_dir()
     runner = NowPlayingRunner(
         RunnerDeps(
             platform=platform,
-            sp=sp,
+            playback_provider=provider,
             cache_dir=cache_dir,
             state_path=state_file_path(),
             poll_interval_seconds=args.poll_interval,
-            on_token_refresh=refresh,
         )
     )
 
@@ -227,7 +243,11 @@ def _autostart(args: argparse.Namespace) -> int:
         return 0
     if args.action == "enable":
         try:
-            enable_autostart(env_file=args.env_file, username=args.username)
+            enable_autostart(
+                env_file=args.env_file,
+                username=args.username,
+                source=getattr(args, "source", None),
+            )
         except AutostartSetupError as exc:
             print(exc, file=sys.stderr)
             return 1
@@ -266,10 +286,15 @@ def _diag(args: argparse.Namespace) -> int:
     from now_playing_desktops.platforms.windows_dpi import bootstrap_process_dpi_awareness
 
     bootstrap_process_dpi_awareness()
+    try:
+        source_setting = parse_source_setting(getattr(args, "source", None))
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 1
     username = resolve_spotify_username(getattr(args, "username", None))
-    auth_lines = spotify_auth_diag_lines(username)
+    diag_lines = playback_diag_lines(source_setting=source_setting, username=username)
     report = collect_windows_diag_report()
-    print("\n".join([*auth_lines, "", format_windows_diag_report(report)]))
+    print("\n".join([*diag_lines, "", format_windows_diag_report(report)]))
     return 0
 
 
@@ -283,7 +308,7 @@ def _restore(args: argparse.Namespace) -> int:
     runner = NowPlayingRunner(
         RunnerDeps(
             platform=platform,
-            sp=object(),
+            playback_provider=object(),  # type: ignore[arg-type]
             cache_dir=default_cache_dir(),
             state_path=args.state_file or state_file_path(),
             poll_interval_seconds=DEFAULT_POLL_INTERVAL_SECONDS,

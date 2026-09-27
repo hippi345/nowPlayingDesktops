@@ -55,7 +55,7 @@ def test_compose_from_foreign_cwd_with_env_file_like_autostart(tmp_path: Path, m
     runner = NowPlayingRunner(
         RunnerDeps(
             platform=platform,
-            sp=MagicMock(),
+            playback_provider=MagicMock(),
             cache_dir=config_dir / "cache",
             state_path=config_dir / "state.json",
             poll_interval_seconds=2.5,
@@ -71,8 +71,10 @@ def test_compose_from_foreign_cwd_with_env_file_like_autostart(tmp_path: Path, m
     )
 
     with patch(
-        "now_playing_desktops.runner.download_album_art",
-        side_effect=lambda *_a, **_k: None,
+        "now_playing_desktops.runner.load_track_cover",
+        side_effect=lambda track, *, download_dir, session=None: Image.open(cover_path).convert(
+            "RGBA"
+        ),
     ):
         composed_path = runner._compose_path(PLAYING, 1664, 1109)
 

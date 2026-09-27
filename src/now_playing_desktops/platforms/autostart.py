@@ -9,6 +9,7 @@ from pathlib import Path
 
 from now_playing_desktops import env_loader
 from now_playing_desktops.config import user_config_dir
+from now_playing_desktops.playback_factory import parse_source_setting
 
 
 class AutostartSetupError(RuntimeError):
@@ -42,15 +43,30 @@ def _runner_invocation() -> list[str]:
     return [sys.executable, "-m", "now_playing_desktops"]
 
 
-def build_run_argv(*, env_file: Path, username: str | None) -> list[str]:
-    argv = [*_runner_invocation(), "run", "--env-file", str(env_file)]
+def build_run_argv(
+    *,
+    env_file: Path | None,
+    username: str | None,
+    source: str | None = None,
+) -> list[str]:
+    argv = [*_runner_invocation(), "run"]
+    source_setting = parse_source_setting(source)
+    if source_setting != "auto":
+        argv.extend(["--source", source_setting])
+    if env_file is not None:
+        argv.extend(["--env-file", str(env_file)])
     if username:
         argv.append(username)
     return argv
 
 
-def _windows_run_command(*, env_file: Path, username: str | None) -> str:
-    argv = build_run_argv(env_file=env_file, username=username)
+def _windows_run_command(
+    *,
+    env_file: Path | None,
+    username: str | None,
+    source: str | None = None,
+) -> str:
+    argv = build_run_argv(env_file=env_file, username=username, source=source)
     inner = " ".join(_quote_windows_argument(part) for part in argv)
     workdir = _working_directory()
     return f'cmd /c "cd /d {_quote_windows_argument(str(workdir))} && {inner}"'
@@ -70,23 +86,45 @@ def autostart_enabled() -> bool:
     return False
 
 
-def enable_autostart(*, env_file: Path | None = None, username: str | None = None) -> None:
+def enable_autostart(
+    *,
+    env_file: Path | None = None,
+    username: str | None = None,
+    source: str | None = None,
+) -> None:
+    source_setting = parse_source_setting(source)
+    needs_spotify = env_loader.autostart_requires_spotify_credentials(source_setting=source_setting)
+
     if env_file is not None and not env_file.expanduser().is_file():
         raise AutostartSetupError(env_loader.missing_env_file_message())
 
     env_loader.load_environment(explicit=env_file)
     resolved_env = env_loader.find_env_file(explicit=env_file)
-    if resolved_env is None or not env_loader.spotify_credentials_configured(explicit=env_file):
+    if needs_spotify and (
+        resolved_env is None or not env_loader.spotify_credentials_configured(explicit=env_file)
+    ):
         raise AutostartSetupError(env_loader.missing_env_file_message())
 
     resolved_username = env_loader.resolve_spotify_username(username)
 
     if sys.platform == "win32":
-        _windows_enable_autostart(env_file=resolved_env, username=resolved_username)
+        _windows_enable_autostart(
+            env_file=resolved_env,
+            username=resolved_username,
+            source=source_setting,
+        )
     elif sys.platform == "darwin":
-        _macos_enable_autostart(env_file=resolved_env, username=resolved_username)
+        _macos_enable_autostart(
+            env_file=resolved_env,
+            username=resolved_username,
+            source=source_setting,
+        )
     elif sys.platform == "linux":
-        _linux_enable_autostart(env_file=resolved_env, username=resolved_username)
+        _linux_enable_autostart(
+            env_file=resolved_env,
+            username=resolved_username,
+            source=source_setting,
+        )
     else:
         raise OSError(f"Autostart not supported on {sys.platform}")
 
@@ -116,10 +154,15 @@ def _windows_autostart_enabled() -> bool:
         return False
 
 
-def _windows_enable_autostart(*, env_file: Path, username: str | None) -> None:
+def _windows_enable_autostart(
+    *,
+    env_file: Path | None,
+    username: str | None,
+    source: str,
+) -> None:
     import winreg
 
-    command = _windows_run_command(env_file=env_file, username=username)
+    command = _windows_run_command(env_file=env_file, username=username, source=source)
     with winreg.CreateKeyEx(
         winreg.HKEY_CURRENT_USER,
         r"Software\Microsoft\Windows\CurrentVersion\Run",
@@ -172,8 +215,13 @@ def _linux_autostart_enabled() -> bool:
     return _linux_desktop_path().is_file()
 
 
-def _linux_enable_autostart(*, env_file: Path, username: str | None) -> None:
-    argv = build_run_argv(env_file=env_file, username=username)
+def _linux_enable_autostart(
+    *,
+    env_file: Path | None,
+    username: str | None,
+    source: str,
+) -> None:
+    argv = build_run_argv(env_file=env_file, username=username, source=source)
     exec_line = " ".join(_quote_desktop_exec_argument(part) for part in argv)
     workdir = _working_directory()
     path = _linux_desktop_path()
@@ -204,8 +252,13 @@ def _macos_autostart_enabled() -> bool:
     return _macos_plist_path().is_file()
 
 
-def _macos_enable_autostart(*, env_file: Path, username: str | None) -> None:
-    argv = build_run_argv(env_file=env_file, username=username)
+def _macos_enable_autostart(
+    *,
+    env_file: Path | None,
+    username: str | None,
+    source: str,
+) -> None:
+    argv = build_run_argv(env_file=env_file, username=username, source=source)
     plist_path = _macos_plist_path()
     plist_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {

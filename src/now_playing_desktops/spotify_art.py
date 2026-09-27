@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -13,16 +12,9 @@ import requests
 import spotipy
 from spotipy.exceptions import SpotifyException
 
+from now_playing_desktops.playback_types import TrackPlayback
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class TrackPlayback:
-    track_id: str
-    art_url: str
-    title: str
-    artist: str
-    is_playing: bool
 
 
 def pick_album_image_url(images: list[dict[str, Any]]) -> str | None:
@@ -44,6 +36,7 @@ def parse_playing_track(payload: dict[str, Any] | None) -> TrackPlayback | None:
     title = item.get("name") or "Unknown Title"
     artists = item.get("artists") or []
     artist = ", ".join(a.get("name", "") for a in artists if a.get("name")) or "Unknown Artist"
+    album = album.get("name") or ""
     is_playing = bool(payload.get("is_playing"))
     return TrackPlayback(
         track_id=track_id,
@@ -51,6 +44,7 @@ def parse_playing_track(payload: dict[str, Any] | None) -> TrackPlayback | None:
         title=title,
         artist=artist,
         is_playing=is_playing,
+        album=album,
     )
 
 

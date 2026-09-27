@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from now_playing_desktops.spotify_art import TrackPlayback
-from tests.helpers import FakePlatform, make_runner, make_test_cover
+from tests.helpers import FakePlatform, make_runner, mock_load_track_cover_rgba
 
 PLAYING = TrackPlayback(
     track_id="quality-track",
@@ -23,15 +23,12 @@ def test_failed_quality_checks_still_apply_and_cache(tmp_path: Path, caplog):
 
     with (
         patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PLAYING,
         ),
         patch(
-            "now_playing_desktops.runner.download_album_art",
-            side_effect=lambda _u, dest, session=None: make_test_cover().save(
-                dest,
-                format="JPEG",
-            ),
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
         ),
         patch(
             "now_playing_desktops.verification.wallpaper_analysis.assert_glass_panel_present",
@@ -56,15 +53,12 @@ def test_strict_compose_verification_still_raises(tmp_path: Path, monkeypatch):
 
     with (
         patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PLAYING,
         ),
         patch(
-            "now_playing_desktops.runner.download_album_art",
-            side_effect=lambda _u, dest, session=None: make_test_cover().save(
-                dest,
-                format="JPEG",
-            ),
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
         ),
         patch(
             "now_playing_desktops.verification.wallpaper_analysis.assert_glass_panel_present",
@@ -84,15 +78,12 @@ def test_failed_quality_checks_log_warning_not_error(tmp_path: Path, caplog):
 
     with (
         patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PLAYING,
         ),
         patch(
-            "now_playing_desktops.runner.download_album_art",
-            side_effect=lambda _u, dest, session=None: make_test_cover().save(
-                dest,
-                format="JPEG",
-            ),
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
         ),
         patch(
             "now_playing_desktops.verification.wallpaper_analysis.assert_glass_panel_present",

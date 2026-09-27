@@ -14,7 +14,7 @@ from now_playing_desktops.platforms.linux_backends import FehWallpaperBackend
 from now_playing_desktops.platforms.linux_de import LinuxDesktopEnvironment
 from now_playing_desktops.runner import NowPlayingRunner, RunnerDeps
 from now_playing_desktops.spotify_art import TrackPlayback
-from tests.helpers import make_sample_cover, make_test_cover
+from tests.helpers import make_sample_cover, mock_load_track_cover_rgba
 from tests.linux_desktop_capture import (
     assert_tile_centered,
     capture_root_png,
@@ -61,7 +61,7 @@ def _make_runner(work: Path, platform: LinuxWallpaperPlatform) -> NowPlayingRunn
     return NowPlayingRunner(
         RunnerDeps(
             platform=platform,
-            sp=MagicMock(),
+            playback_provider=MagicMock(),
             cache_dir=work / "cache",
             state_path=work / "state.json",
             poll_interval_seconds=0.05,
@@ -126,15 +126,12 @@ def test_linux_root_capture_shows_centered_tile_and_restore(
                 return_value=_screen_info(width, height),
             ),
             patch(
-                "now_playing_desktops.runner.fetch_playback_with_backoff",
+                "now_playing_desktops.runner.fetch_playback_for_runner",
                 side_effect=[VERIFY_TRACK, paused],
             ),
             patch(
-                "now_playing_desktops.runner.download_album_art",
-                side_effect=lambda _u, dest, session=None: make_test_cover().save(
-                    dest,
-                    "JPEG",
-                ),
+                "now_playing_desktops.runner.load_track_cover",
+                side_effect=mock_load_track_cover_rgba,
             ),
         ):
             runner.startup()

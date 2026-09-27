@@ -17,12 +17,10 @@ from PIL import Image
 
 from now_playing_desktops.art_cache import ComposedArtCache
 from now_playing_desktops.composer import compose_wallpaper, save_wallpaper
+from now_playing_desktops.cover_art import load_track_cover
 from now_playing_desktops.platforms.base import WallpaperPlatform
-from now_playing_desktops.spotify_art import (
-    TrackPlayback,
-    download_album_art,
-    fetch_playback_with_backoff,
-)
+from now_playing_desktops.playback_types import TrackPlayback
+from now_playing_desktops.sources.base import PlaybackProvider
 from now_playing_desktops.wallpaper_state import (
     WallpaperSessionState,
     path_is_under_directory,
@@ -35,12 +33,11 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RunnerDeps:
     platform: WallpaperPlatform
-    sp: object
+    playback_provider: PlaybackProvider
     cache_dir: Path
     state_path: Path
     poll_interval_seconds: float
     session: requests.Session | None = None
-    on_token_refresh: Callable[[], None] | None = None
     sleep: Callable[[float], None] | None = None  # injected in tests
 
     def __post_init__(self) -> None:
@@ -48,6 +45,11 @@ class RunnerDeps:
             import time
 
             self.sleep = time.sleep
+
+
+def fetch_playback_for_runner(deps: RunnerDeps) -> TrackPlayback | None:
+    """Resolve current playback; patched in unit tests."""
+    return deps.playback_provider.fetch_current()
 
 
 class NowPlayingRunner:
@@ -198,23 +200,23 @@ class NowPlayingRunner:
         width: int,
         height: int,
     ) -> Path:
-        cached = self._composed_cache.get(track.track_id, track.art_url, width, height)
+        cached = self._composed_cache.get(track.track_id, track.art_cache_key, width, height)
         if cached:
             logger.debug("Cache hit for %s at %sx%s", track.track_id, width, height)
             return cached
 
-        self._download_dir.mkdir(parents=True, exist_ok=True)
-        download_path = self._download_dir / f"{track.track_id}.jpg"
-        download_album_art(track.art_url, download_path, session=self.deps.session)
-        with Image.open(download_path) as cover_image:
-            cover = cover_image.convert("RGBA")
-            composed = compose_wallpaper(
-                cover,
-                title=track.title,
-                artist=track.artist,
-                width=width,
-                height=height,
-            )
+        cover = load_track_cover(
+            track,
+            download_dir=self._download_dir,
+            session=self.deps.session,
+        )
+        composed = compose_wallpaper(
+            cover,
+            title=track.title,
+            artist=track.artist,
+            width=width,
+            height=height,
+        )
         fd, tmp_name = tempfile.mkstemp(suffix=".png", dir=self._composed_cache.cache_dir)
         os.close(fd)
         tmp = Path(tmp_name)
@@ -232,7 +234,7 @@ class NowPlayingRunner:
             width=width,
             height=height,
         )
-        return self._composed_cache.put(track.track_id, track.art_url, width, height, tmp)
+        return self._composed_cache.put(track.track_id, track.art_cache_key, width, height, tmp)
 
     def _maybe_warn_composed_wallpaper_quality(
         self,
@@ -370,7 +372,7 @@ class NowPlayingRunner:
         signature = self._monitor_layout_signature(monitors)
         cached = self._composed_cache.get(
             track.track_id,
-            track.art_url,
+            track.art_cache_key,
             canvas_w,
             canvas_h,
             layout_signature=f"virtual:{signature}",
@@ -379,17 +381,17 @@ class NowPlayingRunner:
             logger.debug("Virtual desktop cache hit for %s", track.track_id)
             return cached
 
-        self._download_dir.mkdir(parents=True, exist_ok=True)
-        download_path = self._download_dir / f"{track.track_id}.jpg"
-        download_album_art(track.art_url, download_path, session=self.deps.session)
-        with Image.open(download_path) as cover_image:
-            cover = cover_image.convert("RGBA")
-            composed = compose_virtual_desktop_wallpaper(
-                cover,
-                title=track.title,
-                artist=track.artist,
-                monitors=monitors,
-            )
+        cover = load_track_cover(
+            track,
+            download_dir=self._download_dir,
+            session=self.deps.session,
+        )
+        composed = compose_virtual_desktop_wallpaper(
+            cover,
+            title=track.title,
+            artist=track.artist,
+            monitors=monitors,
+        )
         if composed.size != (canvas_w, canvas_h):
             raise ValueError(
                 f"Virtual desktop wallpaper size {composed.size} != {canvas_w}x{canvas_h}",
@@ -416,7 +418,7 @@ class NowPlayingRunner:
         save_wallpaper(composed, tmp)
         return self._composed_cache.put(
             track.track_id,
-            track.art_url,
+            track.art_cache_key,
             canvas_w,
             canvas_h,
             tmp,
@@ -445,10 +447,7 @@ class NowPlayingRunner:
                 self.deps.platform.set_wallpaper(composed_path, screen_id=screen_id)
 
     def apply_playback_once(self) -> None:
-        track = fetch_playback_with_backoff(
-            self.deps.sp,
-            on_token_refresh=self.deps.on_token_refresh,
-        )
+        track = fetch_playback_for_runner(self.deps)
         if track is None or not track.is_playing:
             self.restore_original_wallpaper()
             return
@@ -456,7 +455,7 @@ class NowPlayingRunner:
         if not self._state.original_wallpaper_path and not self._state.original_wallpaper_snapshot:
             self._ensure_original_saved(activate_session=True)
 
-        key = (track.track_id, track.art_url)
+        key = (track.track_id, track.art_cache_key)
         if key == self._last_applied:
             logger.debug("Track unchanged; skipping wallpaper update")
             return

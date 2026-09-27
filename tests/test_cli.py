@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from now_playing_desktops.cli import build_parser, main
 from now_playing_desktops.spotify_art import TrackPlayback
 from now_playing_desktops.wallpaper_state import WallpaperSessionState
-from tests.helpers import FakePlatform, make_test_cover
+from tests.helpers import FakePlatform, mock_load_track_cover_rgba
 
 PLAYING = TrackPlayback(
     track_id="t1",
@@ -42,8 +42,12 @@ def test_cli_verbose_before_subcommand_parses():
         patch("now_playing_desktops.cli.NowPlayingRunner"),
         patch("now_playing_desktops.cli.get_platform", return_value=MagicMock()),
         patch(
-            "now_playing_desktops.cli.create_spotify_client",
-            return_value=(MagicMock(), MagicMock(), MagicMock()),
+            "now_playing_desktops.cli.build_playback_provider",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "now_playing_desktops.single_instance.ensure_single_run_instance",
+            return_value=MagicMock(release=MagicMock()),
         ),
         patch(
             "now_playing_desktops.cli.configure_application_logging",
@@ -64,8 +68,12 @@ def test_cli_run_once_invokes_runner(tmp_path: Path):
     with (
         patch("now_playing_desktops.cli.get_platform", return_value=platform),
         patch(
-            "now_playing_desktops.cli.create_spotify_client",
-            return_value=(MagicMock(), MagicMock(), MagicMock()),
+            "now_playing_desktops.cli.build_playback_provider",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "now_playing_desktops.single_instance.ensure_single_run_instance",
+            return_value=MagicMock(release=MagicMock()),
         ),
         patch("now_playing_desktops.cli.NowPlayingRunner", return_value=runner),
         patch("now_playing_desktops.cli.default_cache_dir", return_value=tmp_path / "cache"),
@@ -143,18 +151,22 @@ def test_cli_run_once_then_double_restore(tmp_path: Path, capsys):
     with (
         patch("now_playing_desktops.cli.get_platform", return_value=platform),
         patch(
-            "now_playing_desktops.cli.create_spotify_client",
-            return_value=(MagicMock(), MagicMock(), MagicMock()),
+            "now_playing_desktops.cli.build_playback_provider",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "now_playing_desktops.single_instance.ensure_single_run_instance",
+            return_value=MagicMock(release=MagicMock()),
         ),
         patch("now_playing_desktops.cli.default_cache_dir", return_value=tmp_path / "cache"),
         patch("now_playing_desktops.cli.state_file_path", return_value=state_path),
         patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PLAYING,
         ),
         patch(
-            "now_playing_desktops.runner.download_album_art",
-            side_effect=lambda _u, dest, session=None: make_test_cover().save(dest, format="JPEG"),
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
         ),
     ):
         assert main(["run", "user", "--once"]) == 0
