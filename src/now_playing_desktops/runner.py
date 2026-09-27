@@ -58,6 +58,7 @@ class NowPlayingRunner:
         self._last_applied: tuple[str, str] | None = None
         self._state = WallpaperSessionState.load(deps.state_path)
         self._restore_registered = False
+        self._render_errors_logged: set[str] = set()
 
     def _sleep(self, seconds: float) -> None:
         self.deps.sleep(seconds)
@@ -180,6 +181,41 @@ class NowPlayingRunner:
         save_wallpaper(composed, tmp)
         return self._composed_cache.put(track.track_id, track.art_url, width, height, tmp)
 
+    def _log_render_error_once(self, track_id: str, exc: BaseException) -> None:
+        if track_id in self._render_errors_logged:
+            return
+        self._render_errors_logged.add(track_id)
+        logger.error(
+            "Failed to update wallpaper for track %s: %s",
+            track_id,
+            exc,
+            exc_info=True,
+        )
+
+    def _apply_wallpaper_for_track(self, track: TrackPlayback) -> None:
+        screens = self.deps.platform.list_screens()
+        per_screen = self.deps.platform.supports_per_screen_wallpaper()
+        sizes = {(s.width, s.height) for s in screens}
+        if per_screen and len(sizes) > 1:
+            for screen in screens:
+                if screen.width <= 0 or screen.height <= 0:
+                    raise ValueError(
+                        f"Invalid screen size {screen.width}x{screen.height} "
+                        f"for screen {screen.screen_id}"
+                    )
+                composed_path = self._compose_path(track, screen.width, screen.height)
+                self.deps.platform.set_wallpaper(composed_path, screen_id=screen.screen_id)
+        else:
+            if screens:
+                best = max(screens, key=lambda s: s.width * s.height)
+                width, height = best.width, best.height
+            else:
+                width, height = self.deps.platform.get_primary_screen_size()
+            if width <= 0 or height <= 0:
+                raise ValueError(f"Invalid wallpaper size {width}x{height}")
+            composed_path = self._compose_path(track, width, height)
+            self.deps.platform.set_wallpaper(composed_path)
+
     def apply_playback_once(self) -> None:
         track = fetch_playback_with_backoff(
             self.deps.sp,
@@ -197,21 +233,13 @@ class NowPlayingRunner:
             logger.debug("Track unchanged; skipping wallpaper update")
             return
 
-        screens = self.deps.platform.list_screens()
-        per_screen = self.deps.platform.supports_per_screen_wallpaper()
-        sizes = {(s.width, s.height) for s in screens}
-        if per_screen and len(sizes) > 1:
-            for screen in screens:
-                composed_path = self._compose_path(track, screen.width, screen.height)
-                self.deps.platform.set_wallpaper(composed_path, screen_id=screen.screen_id)
-        else:
-            if screens:
-                best = max(screens, key=lambda s: s.width * s.height)
-                width, height = best.width, best.height
-            else:
-                width, height = self.deps.platform.get_primary_screen_size()
-            composed_path = self._compose_path(track, width, height)
-            self.deps.platform.set_wallpaper(composed_path)
+        try:
+            self._apply_wallpaper_for_track(track)
+        except Exception as exc:
+            self._log_render_error_once(track.track_id, exc)
+            return
+
+        self._render_errors_logged.discard(track.track_id)
         self._last_applied = key
         self._state.session_active = True
         self._state.save(self.deps.state_path)

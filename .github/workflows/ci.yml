@@ -76,3 +76,6 @@ jobs:
 
       - name: Tests
         run: pytest --cov=now_playing_desktops --cov-report=term-missing -q
+
+      - name: Windows display enumeration smoke test
+        run: pytest tests/test_platforms_windows_monitors.py::test_real_monitor_enumeration_and_compose -q

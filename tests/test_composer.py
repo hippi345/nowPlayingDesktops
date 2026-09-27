@@ -82,6 +82,18 @@ def test_backdrop_heavy_blur_obscures_cover_detail():
     assert blurred_var < sharp_var * 0.35
 
 
+def test_scale_cover_to_fill_rejects_non_positive_size():
+    cover = Image.new("RGB", (100, 100))
+    with pytest.raises(ValueError, match="positive"):
+        scale_cover_to_fill(cover, 1920, 0)
+
+
+def test_compose_wallpaper_rejects_non_positive_canvas():
+    cover = Image.new("RGB", (100, 100))
+    with pytest.raises(ValueError, match="positive"):
+        compose_wallpaper(cover, title="T", artist="A", width=-1, height=1080)
+
+
 def test_radial_vignette_corners_darker_than_center():
     cover = make_sample_cover()
     backdrop = render_backdrop(cover, 1920, 1080)

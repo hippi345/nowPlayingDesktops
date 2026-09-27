@@ -156,6 +156,8 @@ def backdrop_blur_radius(width: int, height: int) -> float:
 
 def scale_cover_to_fill(cover: Image.Image, width: int, height: int) -> Image.Image:
     """Scale ``cover`` with cover-fit (max scale) and center-crop to ``width`` x ``height``."""
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Wallpaper size must be positive, got {width}x{height}")
     scale = max(width / cover.width, height / cover.height)
     new_w = max(1, int(round(cover.width * scale)))
     new_h = max(1, int(round(cover.height * scale)))
@@ -413,6 +415,8 @@ def compose_wallpaper(
     height: int,
 ) -> Image.Image:
     """Build a wallpaper image at ``width`` x ``height``."""
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Wallpaper size must be positive, got {width}x{height}")
     canvas = render_backdrop(cover, width, height).convert("RGBA")
     foreground = _foreground_cover(cover.convert("RGBA"), width, height)
     placement = _cover_placement(foreground, width, height, height)
