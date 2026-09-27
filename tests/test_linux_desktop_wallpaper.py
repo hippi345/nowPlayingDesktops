@@ -74,7 +74,7 @@ def test_linux_xvfb_desktop_centering_after_feh(
         image = Path({str(image_path)!r})
         subprocess.run(["feh", "--bg-fill", str(image)], check=True)
         time.sleep(0.6)
-        with mss.mss() as grabber:
+        with mss.MSS() as grabber:
             monitor = grabber.monitors[1]
             shot = grabber.grab(monitor)
             img = Image.frombytes("RGB", shot.size, shot.rgb)
@@ -100,4 +100,4 @@ def test_linux_xvfb_desktop_centering_after_feh(
         ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
         capture_path = tmp_path / "capture.png"
         if capture_path.is_file():
-            capture_path.replace(ARTIFACTS_DIR / artifact_name)
+            shutil.copy2(capture_path, ARTIFACTS_DIR / artifact_name)
