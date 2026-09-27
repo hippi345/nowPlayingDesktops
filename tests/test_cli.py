@@ -150,9 +150,7 @@ def test_cli_run_once_then_double_restore(tmp_path: Path, capsys):
         ),
         patch(
             "now_playing_desktops.runner.download_album_art",
-            side_effect=lambda _u, dest, session=None: make_test_cover().save(
-                dest, format="JPEG"
-            ),
+            side_effect=lambda _u, dest, session=None: make_test_cover().save(dest, format="JPEG"),
         ),
     ):
         assert main(["run", "user", "--once"]) == 0

@@ -189,10 +189,7 @@ class NowPlayingRunner:
             self.restore_original_wallpaper()
             return
 
-        if (
-            not self._state.original_wallpaper_path
-            and not self._state.original_wallpaper_snapshot
-        ):
+        if not self._state.original_wallpaper_path and not self._state.original_wallpaper_snapshot:
             self._ensure_original_saved(activate_session=True)
 
         key = (track.track_id, track.art_url)
