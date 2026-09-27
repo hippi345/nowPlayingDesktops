@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -72,6 +73,8 @@ def _make_runner(work: Path, platform: LinuxWallpaperPlatform) -> NowPlayingRunn
 
 @pytest.fixture(scope="module", autouse=True)
 def _require_tools():
+    if sys.platform != "linux":
+        pytest.skip("Linux root-window capture tests run only on Linux CI")
     require_linux_capture_tools()
 
 
