@@ -108,7 +108,8 @@ def test_runner_poll_tick_logged(tmp_path, caplog):
             return_value=None,
         ),
         patch.object(NowPlayingRunner, "startup"),
-        caplog.at_level(logging.DEBUG),pytest.raises(KeyboardInterrupt)
+        caplog.at_level(logging.DEBUG),
+        pytest.raises(KeyboardInterrupt),
     ):
         runner.run_forever()
     assert "poll tick 1" in caplog.text
