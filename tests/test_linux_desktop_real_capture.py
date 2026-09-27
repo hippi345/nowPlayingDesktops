@@ -65,7 +65,6 @@ def _make_runner(work: Path, platform: LinuxWallpaperPlatform) -> NowPlayingRunn
             cache_dir=work / "cache",
             state_path=work / "state.json",
             poll_interval_seconds=0.05,
-            on_token_refresh=lambda: None,
             sleep=lambda _s: None,
         )
     )
