@@ -62,6 +62,19 @@ def test_macos_capture_restore_per_screen(tmp_path: Path):
 
 
 def test_macos_osascript_escapes_spaces_and_quotes(tmp_path: Path):
+    if sys.platform == "win32":
+        nested = tmp_path / "my wall folder"
+        image = nested / "bg.jpg"
+        nested.mkdir()
+        image.write_bytes(b"x")
+        platform = MacOSWallpaperPlatform()
+        with patch("now_playing_desktops.platforms.macos.subprocess.run") as run_mock:
+            platform._set_all_screens(image)
+        script = run_mock.call_args[0][0][-1]
+        assert "every desktop" in script
+        assert "my wall folder" in script
+        return
+
     nested = tmp_path / 'my "wall" folder'
     nested.mkdir()
     image = nested / "bg.jpg"
