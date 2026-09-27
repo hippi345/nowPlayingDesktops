@@ -173,6 +173,22 @@ def test_runner_pause_triggers_windows_restore(tmp_path: Path):
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
+def test_set_wallpaper_invokes_fill_style(tmp_path: Path):
+    from now_playing_desktops.platforms.windows import WindowsWallpaperPlatform
+
+    image = tmp_path / "fill-test.png"
+    from PIL import Image
+
+    Image.new("RGB", (8, 8), (1, 2, 3)).save(image)
+    platform = WindowsWallpaperPlatform()
+    with patch(
+        "now_playing_desktops.platforms.windows_restore.apply_windows_fill_wallpaper_style",
+    ) as fill_mock:
+        platform.set_wallpaper(image)
+    fill_mock.assert_called_once()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
 def test_windows_wallpaper_smoke_snapshot_apply_restore(tmp_path: Path):
     """Live SPI snapshot/apply cycle on the CI desktop with byte hash verification."""
     from now_playing_desktops.platforms.windows import WindowsWallpaperPlatform
@@ -192,7 +208,11 @@ def test_windows_wallpaper_smoke_snapshot_apply_restore(tmp_path: Path):
     from PIL import Image
 
     Image.new("RGB", (64, 64), (40, 120, 200)).save(test_image)
-    platform.set_wallpaper(test_image)
+    with patch(
+        "now_playing_desktops.platforms.windows_restore.apply_windows_fill_wallpaper_style",
+    ) as fill_mock:
+        platform.set_wallpaper(test_image)
+    fill_mock.assert_called_once()
 
     transcoded = (
         Path(__import__("os").environ.get("APPDATA", ""))

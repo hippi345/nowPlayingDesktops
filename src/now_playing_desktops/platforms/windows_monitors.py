@@ -69,6 +69,27 @@ def ensure_positive_monitor_size(
     return fw, fh, True
 
 
+def _effective_dpi_for_hmonitor(hmonitor: int) -> tuple[int, int]:
+    if sys.platform != "win32":
+        return 96, 96
+    try:
+        shcore = ctypes.windll.shcore
+        mdt_effective_dpi = 0
+        dpi_x = wintypes.UINT()
+        dpi_y = wintypes.UINT()
+        result = shcore.GetDpiForMonitor(
+            hmonitor,
+            mdt_effective_dpi,
+            ctypes.byref(dpi_x),
+            ctypes.byref(dpi_y),
+        )
+        if result == 0:
+            return max(96, int(dpi_x.value)), max(96, int(dpi_y.value))
+    except (AttributeError, OSError, TypeError):
+        pass
+    return 96, 96
+
+
 def set_process_dpi_aware() -> None:
     import contextlib
 
@@ -88,9 +109,46 @@ def set_process_dpi_aware() -> None:
 def primary_screen_pixel_size() -> tuple[int, int]:
     if sys.platform != "win32" or user32 is None:
         return 1920, 1080
+    set_process_dpi_aware()
     width = int(user32.GetSystemMetrics(SM_CXSCREEN))
     height = int(user32.GetSystemMetrics(SM_CYSCREEN))
     return max(1, width), max(1, height)
+
+
+def compose_canvas_pixel_size(monitors: list[MonitorInfo]) -> tuple[int, int]:
+    """Pixel size for a single SPI wallpaper bitmap (virtual desktop span or one monitor)."""
+    if not monitors:
+        return primary_screen_pixel_size()
+    if len(monitors) == 1:
+        monitor = monitors[0]
+        return monitor.width, monitor.height
+    left = min(monitor.left for monitor in monitors)
+    top = min(monitor.top for monitor in monitors)
+    right = max(monitor.left + monitor.width for monitor in monitors)
+    bottom = max(monitor.top + monitor.height for monitor in monitors)
+    return max(1, right - left), max(1, bottom - top)
+
+
+def log_monitors_for_wallpaper_render(monitors: list[MonitorInfo]) -> None:
+    """Log detected monitor geometry (call after DPI awareness is enabled)."""
+    if not monitors:
+        logger.warning("No monitors detected for wallpaper render")
+        return
+    canvas_w, canvas_h = compose_canvas_pixel_size(monitors)
+    for monitor in monitors:
+        dpi_x, dpi_y = _effective_dpi_for_hmonitor(int(monitor.monitor_id))
+        logger.info(
+            "Monitor %s: %dx%d at (%d,%d) primary=%s effective_dpi=%dx%d",
+            monitor.monitor_id,
+            monitor.width,
+            monitor.height,
+            monitor.left,
+            monitor.top,
+            monitor.is_primary,
+            dpi_x,
+            dpi_y,
+        )
+    logger.info("Wallpaper compose canvas: %dx%d", canvas_w, canvas_h)
 
 
 def monitor_info_from_win32(
@@ -120,6 +178,18 @@ def monitor_info_from_win32(
             height,
         )
     is_primary = bool(info.dwFlags & MONITORINFOF_PRIMARY)
+    dpi_x, dpi_y = _effective_dpi_for_hmonitor(int(hmonitor))
+    logger.debug(
+        "Win32 monitor %s rect=%sx%s at (%s,%s) dpi=%sx%s primary=%s",
+        hmonitor,
+        width,
+        height,
+        rect.left,
+        rect.top,
+        dpi_x,
+        dpi_y,
+        is_primary,
+    )
     return MonitorInfo(
         monitor_id=str(int(hmonitor)),
         width=width,
@@ -196,3 +266,7 @@ def largest_monitor_pixel_size(monitors: list[MonitorInfo]) -> tuple[int, int]:
             best = monitor
             best_area = area
     return best.width, best.height
+
+
+if sys.platform == "win32":
+    set_process_dpi_aware()
