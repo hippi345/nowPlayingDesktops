@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -37,7 +38,7 @@ def test_cli_verbose_before_subcommand_parses():
             code = main(["-v", "run", "user", "--once"])
     assert code == 0
     basic_config.assert_called_once()
-    assert basic_config.call_args.kwargs.get("level") == 10
+    assert basic_config.call_args.kwargs.get("level") == logging.DEBUG
 
 
 def test_cli_run_once_invokes_runner(tmp_path: Path):
