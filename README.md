@@ -7,7 +7,10 @@ Set your desktop wallpaper to the album art of whatever you are playing on Spoti
 
 ## Screenshots
 
-<!-- screenshots: docs/*.png, docs/*.gif go here -->
+<p>
+  <img src="docs/screenshot-weston-estate.png" width="49%" alt="Now-playing wallpaper: Weston Estate, Is this the End?" />
+  <img src="docs/screenshot-lucky-daye.png" width="49%" alt="Now-playing wallpaper: Lucky Daye, Nowhere Fast" />
+</p>
 
 ## Which mode should I pick?
 
