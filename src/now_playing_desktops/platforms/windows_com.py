@@ -38,7 +38,8 @@ def _probe_pythoncom() -> tuple[bool, str]:
             pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
         except pythoncom.com_error as exc:
             if int(exc.hresult) != _RPC_E_CHANGED_MODE:
-                return False, f"pythoncom.CoInitializeEx failed: HRESULT=0x{int(exc.hresult) & 0xFFFFFFFF:08X} ({exc})"
+                hr = int(exc.hresult) & 0xFFFFFFFF
+                return False, f"pythoncom.CoInitializeEx failed: HRESULT=0x{hr:08X} ({exc})"
         pythoncom.CoCreateInstance(
             _DESKTOP_WALLPAPER_CLSID,
             None,

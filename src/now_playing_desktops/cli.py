@@ -226,11 +226,11 @@ def _diag(_args: argparse.Namespace) -> int:
     if sys.platform != "win32":
         print("diag is only available on Windows", file=sys.stderr)
         return 1
-    from now_playing_desktops.platforms.windows_dpi import bootstrap_process_dpi_awareness
     from now_playing_desktops.platforms.windows_diag import (
         collect_windows_diag_report,
         format_windows_diag_report,
     )
+    from now_playing_desktops.platforms.windows_dpi import bootstrap_process_dpi_awareness
 
     bootstrap_process_dpi_awareness()
     report = collect_windows_diag_report()

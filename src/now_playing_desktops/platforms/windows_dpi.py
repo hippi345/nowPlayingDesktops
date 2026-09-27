@@ -29,6 +29,7 @@ DPI_AWARENESS_SYSTEM_AWARE = 1
 DPI_AWARENESS_PER_MONITOR_AWARE = 2
 DPI_AWARENESS_PER_MONITOR_AWARE_V2 = 3
 
+
 class DEVMODEW(ctypes.Structure):
     """Win32 ``DEVMODEW`` layout for ``EnumDisplaySettingsW`` (display fields)."""
 
@@ -146,8 +147,12 @@ def bootstrap_process_dpi_awareness() -> DpiAwarenessBootstrapResult:
     if successful is None and after_thread != "unaware":
         successful = "already-aware (manifest or prior bootstrap)"
         manifest_likely = True
-    elif successful is not None and before_process != PROCESS_DPI_UNAWARE and successful.startswith(
-        "SetProcess",
+    elif (
+        successful is not None
+        and before_process != PROCESS_DPI_UNAWARE
+        and successful.startswith(
+            "SetProcess",
+        )
     ):
         manifest_likely = False
 

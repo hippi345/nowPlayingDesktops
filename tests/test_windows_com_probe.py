@@ -12,7 +12,11 @@ def test_idesktop_wallpaper_probe_uses_ctypes_when_pythoncom_fails():
     wc._com_backend = None
     with (
         patch.object(sys, "platform", "win32"),
-        patch.object(wc, "_probe_pythoncom", return_value=(False, "pythoncom: ImportError: no module")),
+        patch.object(
+            wc,
+            "_probe_pythoncom",
+            return_value=(False, "pythoncom: ImportError: no module"),
+        ),
         patch.object(
             wc,
             "_probe_ctypes_com",

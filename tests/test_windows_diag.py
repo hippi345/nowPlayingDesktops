@@ -4,14 +4,14 @@ import sys
 from unittest.mock import MagicMock, patch
 
 from now_playing_desktops.cli import main
-from now_playing_desktops.platforms.windows_dpi import (
-    DpiAwarenessBootstrapResult,
-    PROCESS_PER_MONITOR_DPI_AWARE,
-)
 from now_playing_desktops.platforms.windows_diag import (
     collect_windows_diag_report,
     diag_report_as_dict,
     format_windows_diag_report,
+)
+from now_playing_desktops.platforms.windows_dpi import (
+    PROCESS_PER_MONITOR_DPI_AWARE,
+    DpiAwarenessBootstrapResult,
 )
 from now_playing_desktops.platforms.windows_monitors import MonitorInfo
 from now_playing_desktops.platforms.windows_restore import WALLPAPER_STYLE_FILL
