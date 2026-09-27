@@ -13,6 +13,11 @@ from now_playing_desktops.config import user_config_dir
 logger = logging.getLogger(__name__)
 
 REQUIRED_SPOTIFY_ENV_VARS = ("SPOTIPY_CLIENT_ID", "SPOTIPY_CLIENT_SECRET")
+SPOTIPY_ENV_KEYS = (
+    "SPOTIPY_CLIENT_ID",
+    "SPOTIPY_CLIENT_SECRET",
+    "SPOTIPY_REDIRECT_URI",
+)
 
 
 def env_file_candidates(*, explicit: Path | None = None) -> list[Path]:
@@ -49,9 +54,7 @@ def load_environment(*, explicit: Path | None = None, verbose: bool = False) -> 
 
 def merged_env_values(*, explicit: Path | None = None) -> dict[str, str | None]:
     """Merge ``os.environ`` with values from the resolved env file (file wins for unset keys)."""
-    merged: dict[str, str | None] = {
-        key: os.environ.get(key) for key in (*REQUIRED_SPOTIFY_ENV_VARS, "SPOTIPY_REDIRECT_URI")
-    }
+    merged: dict[str, str | None] = {key: os.environ.get(key) for key in SPOTIPY_ENV_KEYS}
     path = find_env_file(explicit=explicit)
     if path is not None:
         for key, value in dotenv_values(path).items():
@@ -61,9 +64,17 @@ def merged_env_values(*, explicit: Path | None = None) -> dict[str, str | None]:
 
 
 def spotify_credentials_configured(*, explicit: Path | None = None) -> bool:
-    """Return whether required Spotify OAuth variables are available."""
+    """Return whether Spotify OAuth settings are available (PKCE needs only client ID)."""
     values = merged_env_values(explicit=explicit)
-    return all(values.get(name) for name in REQUIRED_SPOTIFY_ENV_VARS)
+    return bool((values.get("SPOTIPY_CLIENT_ID") or "").strip())
+
+
+def autostart_requires_spotify_credentials(*, source_setting: str) -> bool:
+    """Whether autostart enable needs Spotify OAuth variables in the environment."""
+    from now_playing_desktops.playback_factory import effective_source_name, parse_source_setting
+
+    setting = parse_source_setting(source_setting)
+    return effective_source_name(setting) == "spotify"
 
 
 def default_env_file_hint() -> str:
@@ -75,8 +86,9 @@ def missing_env_file_message() -> str:
     """Message when autostart cannot find OAuth settings."""
     return (
         "Cannot enable autostart: Spotify OAuth settings were not found. "
-        f"Create {default_env_file_hint()} with SPOTIPY_CLIENT_ID and "
-        "SPOTIPY_CLIENT_SECRET (see .env.example), or pass --env-file PATH."
+        f"Create {default_env_file_hint()} with SPOTIPY_CLIENT_ID "
+        "(and SPOTIPY_CLIENT_SECRET only for the legacy flow; see .env.example), "
+        "or pass --env-file PATH."
     )
 
 

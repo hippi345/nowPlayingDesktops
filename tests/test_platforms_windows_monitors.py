@@ -298,7 +298,7 @@ def test_render_error_logged_once_per_track(tmp_path: Path, caplog):
 
     with (
         patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PLAYING,
         ),
         patch.object(

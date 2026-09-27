@@ -79,8 +79,9 @@ def test_resolve_spotify_username_prefers_cli(monkeypatch):
     ("values", "expected"),
     [
         ({}, False),
-        ({"SPOTIPY_CLIENT_ID": "id"}, False),
+        ({"SPOTIPY_CLIENT_ID": "id"}, True),
         ({"SPOTIPY_CLIENT_ID": "id", "SPOTIPY_CLIENT_SECRET": "secret"}, True),
+        ({"SPOTIPY_CLIENT_ID": "id", "SPOTIPY_CLIENT_SECRET": ""}, True),
     ],
 )
 def test_spotify_credentials_configured(tmp_path: Path, monkeypatch, values, expected):

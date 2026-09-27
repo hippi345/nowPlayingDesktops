@@ -116,11 +116,11 @@ def test_windows_desktop_apply_and_display_simulation(tmp_path: Path):
     runner.startup = MagicMock()  # type: ignore[method-assign]
     with (
         patch(
-            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            "now_playing_desktops.runner.fetch_playback_for_runner",
             return_value=PLAYING,
         ),
         patch(
-            "now_playing_desktops.runner.download_album_art",
+            "now_playing_desktops.runner.load_track_cover",
             side_effect=lambda *_a, **_k: None,
         ),
         patch.object(runner, "_compose_path", return_value=image_path),

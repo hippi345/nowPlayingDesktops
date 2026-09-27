@@ -134,7 +134,7 @@ def test_windows_run_key_integration(tmp_path: Path, monkeypatch):
         lambda: [sys.executable, "-m", "now_playing_desktops"],
     )
 
-    autostart._windows_enable_autostart(env_file=env_file, username="ci_user")
+    autostart._windows_enable_autostart(env_file=env_file, username="ci_user", source="auto")
     try:
         with winreg.OpenKey(
             winreg.HKEY_CURRENT_USER,

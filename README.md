@@ -10,22 +10,23 @@ Set your desktop wallpaper to the album art of whatever you are playing on Spoti
 - **Windows** — multi-monitor aware sizing; optional per-monitor wallpaper when `IDesktopWallpaper` is available; `SystemParametersInfo` fallback.
 - **macOS** — sets the wallpaper on **every** display (AppKit / `osascript`); per-screen restore.
 - **Linux** — GNOME family (`gsettings`), KDE Plasma (`plasma-apply-wallpaperimage` / `qdbus`), and lightweight fallbacks (`feh`, `swaybg`, `nitrogen`) with full restore snapshots.
-- Polls Spotify, composes a blurred backdrop + cover + track labels, and restores your original wallpaper on exit or pause.
+- Two playback sources: **Spotify Web API** (high-res art, any device) or **local OS media session** (no Spotify sign-in; desktop app must be playing).
+- Composes a blurred backdrop + cover + track labels, and restores your original wallpaper on exit or pause.
 - Login autostart: `now-playing autostart enable|disable|status` (Windows Run key, XDG `.desktop`, macOS LaunchAgent).
 
 ## Requirements
 
 - Python **3.12+**
-- [Spotify Developer](https://developer.spotify.com/dashboard) app (Client ID and Client Secret)
-- Spotify account with an active session while using the app
+- **Spotify mode:** [Spotify Developer](https://developer.spotify.com/dashboard) app (Client ID; Client Secret optional — see Setup) and an active Spotify session (any device).
+- **Local mode:** Spotify **desktop app** playing on the same machine (no developer app or allowlist).
 
 ### Platform notes
 
 | OS | Extra packages / tools |
 |----|-------------------------|
-| **Windows** | None (uses `ctypes`) |
+| **Windows** | `pip install -e ".[windows]"` for local SMTC playback; wallpaper uses `ctypes` |
 | **macOS** | `pip install -e ".[macos]"` for `appscript`; optional PyObjC (`pyobjc-framework-Cocoa`) for all-screen AppKit control |
-| **Linux GNOME / Unity / Budgie / Cinnamon** | `gsettings`, D-Bus session (usually already installed) |
+| **Linux GNOME / Unity / Budgie / Cinnamon** | `gsettings`, D-Bus session; `pip install -e ".[linux]"` for local MPRIS playback |
 | **Linux KDE** | `plasma-apply-wallpaperimage` or `qdbus6` / `qdbus` |
 | **Other Linux WMs** | One of `feh`, `swaybg`, or `nitrogen`; `xrandr` or `wlr-randr` for screen size |
 
@@ -45,13 +46,19 @@ On macOS:
 pip install -e ".[macos,dev]"
 ```
 
-Copy the example environment file and fill in your Spotify app credentials:
+Copy the example environment file and add your Spotify app **Client ID**:
 
 ```bash
 cp .env.example .env
 # Edit .env — never commit real secrets
 export $(grep -v '^#' .env | xargs)   # optional in an interactive shell
 ```
+
+**PKCE (recommended):** leave `SPOTIPY_CLIENT_SECRET` unset, add the loopback redirect URI in the Spotify dashboard (below), then run `now-playing login YOUR_SPOTIFY_USERNAME` once. Background `run` and login autostart reuse the cached token and refresh it silently.
+
+**Legacy client-secret flow:** set `SPOTIPY_CLIENT_SECRET` in `.env` as well; the app keeps the previous Spotipy behavior (browser sign-in on first `run` if needed).
+
+Apps in [Development mode](https://developer.spotify.com/documentation/web-api/concepts/quota-modes) only work for users on the app's allowlist (Dashboard → your app → Settings → **Users Management**). Spotify currently allows up to **five** authorized users per Development mode app (plus the owner). Extended quota mode is required for wider distribution.
 
 For **login autostart**, the app does not inherit your shell environment. Put a copy of `.env` in the per-user config directory (loaded automatically at startup):
 
@@ -66,9 +73,10 @@ You can also pass `--env-file PATH` on `run` and `autostart enable`, or set `NOW
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `SPOTIPY_CLIENT_ID` | Yes | Spotify app Client ID |
-| `SPOTIPY_CLIENT_SECRET` | Yes | Spotify app Client Secret |
+| `SPOTIPY_CLIENT_SECRET` | No | Client Secret (legacy flow only; omit for PKCE) |
 | `SPOTIPY_REDIRECT_URI` | No | OAuth redirect (default `http://127.0.0.1:8897/callback`) |
-| `SPOTIPY_CLIENT_USERNAME` | No | Spotify username (used for OAuth token cache; recommended for autostart) |
+| `SPOTIPY_CLIENT_USERNAME` | No | Spotify username (token cache key; recommended for autostart) |
+| `NOW_PLAYING_SOURCE` | No | `spotify`, `local`, or `auto` (default `auto`: Spotify when Client ID is set, else local) |
 
 In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), open your app → **Settings** → **Redirect URIs** and add this exact URI (unless you override `SPOTIPY_REDIRECT_URI`):
 
@@ -79,17 +87,32 @@ If another program is already listening on that port, set `SPOTIPY_REDIRECT_URI`
 ## Usage
 
 ```bash
-now-playing run YOUR_SPOTIFY_USERNAME
+# Spotify Web API (PKCE — run login once)
+now-playing login YOUR_SPOTIFY_USERNAME
+now-playing run YOUR_SPOTIFY_USERNAME --source spotify
+
+# Local OS session (no Spotify credentials)
+now-playing run --source local
 ```
 
 Legacy entry points `now-playing-macos` and `now-playing-windows` still work.
 
-- **`now-playing run [USER] [--once] [--env-file PATH]`** — poll Spotify and update the wallpaper. `USER` is optional when `SPOTIPY_CLIENT_USERNAME` is set (recommended in your autostart `.env`).
+- **`now-playing login [USER] [--env-file PATH]`** — interactive Spotify sign-in; stores a per-user token cache under your app config directory.
+- **`now-playing run [USER] [--source spotify|local|auto] [--once] [--env-file PATH]`** — poll the selected source and update the wallpaper. `USER` is required for `spotify` (or set `SPOTIPY_CLIENT_USERNAME`). `local` reads the OS media session (Spotify desktop app). `auto` picks Spotify when `SPOTIPY_CLIENT_ID` is configured, otherwise local.
 - **`now-playing restore`** — restore the wallpaper saved at session start (uses path or platform snapshot).
-- **`now-playing diag`** — (Windows) print monitor sizes, DPI, compose canvas, wallpaper style, and registry state without Spotify credentials.
-- **`now-playing autostart enable [USER] [--env-file PATH]|disable|status`** — register login autostart. `enable` writes an absolute `--env-file` path and your Spotify username into the Windows Run entry, XDG autostart `.desktop`, or macOS LaunchAgent (see autostart `.env` paths above).
+- **`now-playing diag`** — (Windows) print active playback source, what each source currently sees, Spotify auth mode/cache status, plus monitor/DPI/wallpaper diagnostics (no tokens printed).
+- **`now-playing autostart enable [USER] [--source …] [--env-file PATH]|disable|status`** — register login autostart. `enable` writes `--source`, optional `--env-file`, and username into the Windows Run entry, XDG autostart `.desktop`, or macOS LaunchAgent.
 
-On first run, Spotipy opens a browser flow for `user-read-currently-playing`. Stop with `Ctrl+C`; the original wallpaper is restored automatically.
+### Spotify vs local
+
+| | **Spotify (`--source spotify`)** | **Local (`--source local`)** |
+|---|----------------------------------|------------------------------|
+| Sign-in | Client ID (+ optional secret); PKCE `login` once | None |
+| Allowlist | Dev-mode app users (up to 5) | N/A |
+| Art quality | High-resolution album art from the API | Often ~300px SMTC thumbnails (upscaled + blur) |
+| Playback device | Phone, web, desktop, etc. | Spotify **desktop app** on this PC only |
+
+Stop with `Ctrl+C`; the original wallpaper is restored automatically.
 
 ## Restore and crash recovery
 
@@ -106,6 +129,8 @@ Session state lives in the app cache (see `state_file_path()` in `config.py`). O
 | Windows wrong resolution | Run `now-playing diag` and check `dmPels` vs compose canvas; delete stale `%APPDATA%\\now-playing-desktops\\cache\\composed\\*.png` after upgrades |
 | Autostart errors with no console | See `%APPDATA%\\now-playing-desktops\\logs\\now-playing.log` (rotating file log; same path under the platform config dir on Linux/macOS) |
 | OAuth “port in use” / WinError 10013 | Set `SPOTIPY_REDIRECT_URI` to another `127.0.0.1` port and register it in the Spotify dashboard |
+| PKCE `run` says to run `login` | Run `now-playing login` with the same `--env-file` and username once |
+| Local mode shows no track | Start the Spotify desktop app and play; on Windows install `pip install -e ".[windows]"` |
 
 ## Development
 

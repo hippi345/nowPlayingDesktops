@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from now_playing_desktops.platforms.base import ScreenInfo
 from now_playing_desktops.runner import NowPlayingRunner, RunnerDeps
+from now_playing_desktops.sources.base import PlaybackProvider
 
 ARTIFACTS_DIR = Path(os.environ.get("NP_ARTIFACTS_DIR", "/opt/cursor/artifacts"))
 
@@ -60,6 +61,10 @@ def make_sharp_test_cover(size: int = 640) -> Image.Image:
 def make_test_cover(size: int = 640) -> Image.Image:
     """Alias for the high-frequency cover used in sharpness assertions."""
     return make_sharp_test_cover(size)
+
+
+def mock_load_track_cover_rgba(*_args, **_kwargs) -> Image.Image:
+    return make_test_cover().convert("RGBA")
 
 
 def image_variance(image: Image.Image, box: tuple[int, int, int, int]) -> float:
@@ -170,19 +175,17 @@ def make_runner(
     tmp_path: Path,
     *,
     platform: FakePlatform,
-    sp: MagicMock | None = None,
+    playback_provider: PlaybackProvider | None = None,
     sleep: MagicMock | None = None,
-    on_token_refresh: MagicMock | None = None,
 ) -> NowPlayingRunner:
-    sp = sp or MagicMock()
+    provider = playback_provider or MagicMock()
     return NowPlayingRunner(
         RunnerDeps(
             platform=platform,
-            sp=sp,
+            playback_provider=provider,
             cache_dir=tmp_path / "cache",
             state_path=tmp_path / "state.json",
             poll_interval_seconds=2.5,
-            on_token_refresh=on_token_refresh,
             sleep=sleep,
         )
     )

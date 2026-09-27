@@ -199,6 +199,10 @@ def test_cli_diag_command(capsys):
             "now_playing_desktops.platforms.windows_diag.collect_windows_diag_report",
             return_value=fake_report,
         ),
+        patch(
+            "now_playing_desktops.cli.playback_diag_lines",
+            return_value=["Playback source active: spotify", "Spotify cached token: no"],
+        ),
         patch("now_playing_desktops.logging_setup.configure_application_logging"),
     ):
         code = main(["diag"])
