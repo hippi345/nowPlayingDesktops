@@ -126,6 +126,18 @@ def test_wm_fallback_selects_nitrogen_when_only_nitrogen():
         assert isinstance(select_wm_fallback_backend(), NitrogenWallpaperBackend)
 
 
+def test_feh_get_current_wallpaper_parses_single_quoted_paths(tmp_path: Path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("pathlib.Path.home", lambda: home)
+    image = tmp_path / "wall.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n")
+    fehbg = home / ".fehbg"
+    fehbg.write_text(f"feh --no-fehbg --bg-fill '{image}'\n", encoding="utf-8")
+    backend = FehWallpaperBackend()
+    assert backend.get_current_wallpaper() == image
+
+
 def test_feh_restore_runs_fehbg_script(tmp_path: Path):
     backend = FehWallpaperBackend()
     snapshot = {"backend": "feh", "fehbg": "feh --bg-fill /wall.jpg"}

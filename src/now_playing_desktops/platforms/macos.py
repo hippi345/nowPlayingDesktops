@@ -36,6 +36,10 @@ class MacOSWallpaperPlatform:
         else:
             self._set_all_screens(resolved)
 
+    @staticmethod
+    def _escape_applescript_string(value: str) -> str:
+        return value.replace("\\", "\\\\").replace('"', '\\"')
+
     def _set_all_screens(self, path: Path) -> None:
         if _PYOBJC_AVAILABLE:
             workspace = NSWorkspace.sharedWorkspace()
@@ -43,8 +47,9 @@ class MacOSWallpaperPlatform:
             for screen in self._nsscreens():
                 workspace.setDesktopImageURL_forScreen_options_error_(url, screen, None, None)
             return
+        escaped = self._escape_applescript_string(str(path))
         script = (
-            f'tell application "System Events" to tell every desktop to set picture to "{path}"'
+            f'tell application "System Events" to tell every desktop to set picture to "{escaped}"'
         )
         subprocess.run(["osascript", "-e", script], check=True, capture_output=True, text=True)
 
