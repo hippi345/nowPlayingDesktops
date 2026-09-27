@@ -171,9 +171,15 @@ def test_windows_capture_restore_snapshot_includes_monitors(tmp_path):
         patch.object(platform, "_per_monitor", True),
         patch.object(platform, "list_screens", return_value=[]),
         patch.object(platform, "get_current_wallpaper", return_value=primary),
+        patch(
+            "now_playing_desktops.platforms.windows_restore._transcoded_wallpaper_path",
+            return_value=tmp_path / "missing-transcoded",
+        ),
     ):
-        snap = platform.capture_restore_snapshot()
-    assert snap["path"] == str(primary)
+        snap = platform.capture_restore_snapshot(state_dir=tmp_path / "state")
+    stable = snap.get("stable_path") or snap["path"]
+    assert stable
+    assert Path(stable).is_file()
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only integration")

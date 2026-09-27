@@ -60,7 +60,12 @@ class LinuxWallpaperPlatform:
     def supports_per_screen_wallpaper(self) -> bool:
         return False
 
-    def capture_restore_snapshot(self) -> dict[str, Any]:
+    def capture_restore_snapshot(
+        self,
+        *,
+        state_dir: Path | None = None,
+        generated_dir: Path | None = None,
+    ) -> dict[str, Any]:
         snap = self._backend.capture_snapshot()
         snap["de"] = self._de.value
         return snap

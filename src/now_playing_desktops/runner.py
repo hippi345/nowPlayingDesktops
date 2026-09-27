@@ -6,6 +6,7 @@ import atexit
 import logging
 import os
 import signal
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -115,7 +116,10 @@ class NowPlayingRunner:
             self._state.original_wallpaper_path = str(original.resolve())
             if hasattr(self.deps.platform, "capture_restore_snapshot"):
                 self._state.original_wallpaper_snapshot = (
-                    self.deps.platform.capture_restore_snapshot()
+                    self.deps.platform.capture_restore_snapshot(
+                        state_dir=self.deps.state_path.parent,
+                        generated_dir=generated_dir,
+                    )
                 )
         self._state.generated_wallpaper_dir = str(generated_dir)
         if activate_session:
@@ -142,6 +146,13 @@ class NowPlayingRunner:
 
         signal.signal(signal.SIGINT, _signal_handler)
         signal.signal(signal.SIGTERM, _signal_handler)
+
+        if sys.platform == "win32":
+            from now_playing_desktops.platforms.windows_console import (
+                register_console_restore_handler,
+            )
+
+            register_console_restore_handler(_restore_on_exit)
 
     def startup(self) -> None:
         state = WallpaperSessionState.load(self.deps.state_path)
