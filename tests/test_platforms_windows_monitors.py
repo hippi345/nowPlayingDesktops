@@ -192,19 +192,24 @@ def test_real_monitor_enumeration_and_compose(tmp_path):
         assert monitor.width > 0
         assert monitor.height > 0
 
-    target = max(monitors, key=lambda item: item.width * item.height)
+    primary = next(monitor for monitor in monitors if monitor.is_primary)
     cover = make_test_cover()
     composed = compose_wallpaper(
         cover,
         title="Now Playing",
         artist="Artist",
-        width=target.width,
-        height=target.height,
+        width=primary.width,
+        height=primary.height,
     )
+    assert composed.size == (primary.width, primary.height)
     output = tmp_path / "composed.png"
     save_wallpaper(composed, output)
     assert output.is_file()
     assert output.stat().st_size > 0
+    from PIL import Image
+
+    with Image.open(output) as saved:
+        assert saved.size == (primary.width, primary.height)
 
 
 def test_render_error_logged_once_per_track(tmp_path: Path, caplog):

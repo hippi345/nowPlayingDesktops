@@ -15,6 +15,8 @@ class ScreenInfo:
     width: int
     height: int
     is_primary: bool = False
+    left: int = 0
+    top: int = 0
 
 
 class WallpaperPlatform(Protocol):

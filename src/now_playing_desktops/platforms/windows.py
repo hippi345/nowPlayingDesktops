@@ -39,10 +39,16 @@ class WindowsWallpaperPlatform:
         self._per_monitor = sys.platform == "win32" and idesktop_wallpaper_available()
 
     def set_wallpaper(self, image_path: Path, *, screen_id: str | None = None) -> None:
+        from now_playing_desktops.platforms.windows_restore import (
+            apply_windows_fill_wallpaper_style,
+        )
+
         path_str = str(image_path.resolve())
         if screen_id is not None and self._per_monitor:
+            apply_windows_fill_wallpaper_style()
             _set_wallpaper_on_monitor(path_str, screen_id)
             return
+        apply_windows_fill_wallpaper_style()
         if not ctypes.windll.user32.SystemParametersInfoW(
             SPI_SETDESKWALLPAPER,
             0,
@@ -95,6 +101,8 @@ class WindowsWallpaperPlatform:
                 width=m.width,
                 height=m.height,
                 is_primary=m.is_primary,
+                left=m.left,
+                top=m.top,
             )
             for m in enumerate_monitors()
         ]

@@ -36,6 +36,8 @@ SPIF_SENDWININICHANGE = 0x02
 _MAX_WALLPAPER_CHARS = 260
 
 DESKTOP_KEY = r"Control Panel\Desktop"
+WALLPAPER_STYLE_FILL = "10"
+TILE_WALLPAPER_OFF = "0"
 COLORS_KEY = r"Control Panel\Colors"
 WALLPAPERS_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers"
 IE_DESKTOP_KEY = r"Software\Microsoft\Internet Explorer\Desktop\General"
@@ -157,6 +159,29 @@ def _pick_wallpaper_source_bytes(
         logger.info("Selected Windows wallpaper snapshot source: %s", candidate)
         return candidate, data
     return None, None
+
+
+def apply_windows_fill_wallpaper_style() -> None:
+    """Force Fill (not Center/Tile) so the bitmap matches the monitor size."""
+    if winreg is None:
+        return
+    _write_reg_string(
+        winreg.HKEY_CURRENT_USER,
+        DESKTOP_KEY,
+        "WallpaperStyle",
+        WALLPAPER_STYLE_FILL,
+    )
+    _write_reg_string(
+        winreg.HKEY_CURRENT_USER,
+        DESKTOP_KEY,
+        "TileWallpaper",
+        TILE_WALLPAPER_OFF,
+    )
+    logger.debug(
+        "Set WallpaperStyle=%s TileWallpaper=%s before applying wallpaper",
+        WALLPAPER_STYLE_FILL,
+        TILE_WALLPAPER_OFF,
+    )
 
 
 def _read_desktop_style() -> dict[str, str]:

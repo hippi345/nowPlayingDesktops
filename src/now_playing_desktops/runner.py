@@ -212,6 +212,11 @@ class NowPlayingRunner:
         fd, tmp_name = tempfile.mkstemp(suffix=".png", dir=self._composed_cache.cache_dir)
         os.close(fd)
         tmp = Path(tmp_name)
+        if composed.size != (width, height):
+            raise ValueError(
+                f"Composed wallpaper size {composed.size[0]}x{composed.size[1]} "
+                f"does not match target {width}x{height}",
+            )
         save_wallpaper(composed, tmp)
         return self._composed_cache.put(track.track_id, track.art_url, width, height, tmp)
 
@@ -226,29 +231,53 @@ class NowPlayingRunner:
             exc_info=True,
         )
 
+    def _resolve_wallpaper_render_jobs(
+        self,
+        screens: list,
+    ) -> list[tuple[str | None, int, int]]:
+        per_screen = self.deps.platform.supports_per_screen_wallpaper()
+        if per_screen and len({(s.width, s.height) for s in screens}) > 1:
+            jobs: list[tuple[str | None, int, int]] = []
+            for screen in screens:
+                jobs.append((screen.screen_id, screen.width, screen.height))
+            return jobs
+        if sys.platform == "win32":
+            from now_playing_desktops.platforms.windows_monitors import (
+                MonitorInfo,
+                compose_canvas_pixel_size,
+                log_monitors_for_wallpaper_render,
+            )
+
+            monitors = [
+                MonitorInfo(
+                    monitor_id=screen.screen_id,
+                    width=screen.width,
+                    height=screen.height,
+                    is_primary=screen.is_primary,
+                    left=getattr(screen, "left", 0),
+                    top=getattr(screen, "top", 0),
+                )
+                for screen in screens
+            ]
+            log_monitors_for_wallpaper_render(monitors)
+            width, height = compose_canvas_pixel_size(monitors)
+            return [(None, width, height)]
+        if screens:
+            primary = next((s for s in screens if s.is_primary), screens[0])
+            return [(None, primary.width, primary.height)]
+        width, height = self.deps.platform.get_primary_screen_size()
+        return [(None, width, height)]
+
     def _apply_wallpaper_for_track(self, track: TrackPlayback) -> None:
         screens = self.deps.platform.list_screens()
-        per_screen = self.deps.platform.supports_per_screen_wallpaper()
-        sizes = {(s.width, s.height) for s in screens}
-        if per_screen and len(sizes) > 1:
-            for screen in screens:
-                if screen.width <= 0 or screen.height <= 0:
-                    raise ValueError(
-                        f"Invalid screen size {screen.width}x{screen.height} "
-                        f"for screen {screen.screen_id}"
-                    )
-                composed_path = self._compose_path(track, screen.width, screen.height)
-                self.deps.platform.set_wallpaper(composed_path, screen_id=screen.screen_id)
-        else:
-            if screens:
-                best = max(screens, key=lambda s: s.width * s.height)
-                width, height = best.width, best.height
-            else:
-                width, height = self.deps.platform.get_primary_screen_size()
+        for screen_id, width, height in self._resolve_wallpaper_render_jobs(screens):
             if width <= 0 or height <= 0:
-                raise ValueError(f"Invalid wallpaper size {width}x{height}")
+                label = screen_id or "primary"
+                raise ValueError(
+                    f"Invalid wallpaper size {width}x{height} for screen {label}",
+                )
             composed_path = self._compose_path(track, width, height)
-            self.deps.platform.set_wallpaper(composed_path)
+            self.deps.platform.set_wallpaper(composed_path, screen_id=screen_id)
 
     def apply_playback_once(self) -> None:
         track = fetch_playback_with_backoff(

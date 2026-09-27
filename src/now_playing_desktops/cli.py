@@ -182,6 +182,10 @@ def _argv_requests_verbose(argv: list[str]) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if sys.platform == "win32":
+        from now_playing_desktops.platforms.windows_monitors import set_process_dpi_aware
+
+        set_process_dpi_aware()
     argv = list(argv) if argv is not None else sys.argv[1:]
     parser = build_parser()
     args = parser.parse_args(argv)
