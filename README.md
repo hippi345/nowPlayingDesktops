@@ -57,11 +57,13 @@ export $(grep -v '^#' .env | xargs)   # or set variables in your shell profile
 |----------|----------|-------------|
 | `SPOTIPY_CLIENT_ID` | Yes | Spotify app Client ID |
 | `SPOTIPY_CLIENT_SECRET` | Yes | Spotify app Client Secret |
-| `SPOTIPY_REDIRECT_URI` | No | OAuth redirect (default `http://127.0.0.1:8765/callback`) |
+| `SPOTIPY_REDIRECT_URI` | No | OAuth redirect (default `http://127.0.0.1:8897/callback`) |
 
 In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), open your app → **Settings** → **Redirect URIs** and add this exact URI (unless you override `SPOTIPY_REDIRECT_URI`):
 
-`http://127.0.0.1:8765/callback`
+`http://127.0.0.1:8897/callback`
+
+If another program is already listening on that port, set `SPOTIPY_REDIRECT_URI` to a free loopback port (for example `http://127.0.0.1:8898/callback`) and add the same URI in the Spotify dashboard.
 
 ## Usage
 
@@ -90,6 +92,7 @@ Session state lives in the app cache (see `state_file_path()` in `config.py`). O
 | KDE script errors | Install `plasma-apply-wallpaperimage` or `qdbus6` |
 | macOS only primary screen changes | Install PyObjC Cocoa bindings or rely on `osascript` (default fallback) |
 | Windows wrong resolution | DPI awareness is enabled automatically; wallpaper is composed at the largest monitor size when per-monitor COM is unavailable |
+| OAuth “port in use” / WinError 10013 | Set `SPOTIPY_REDIRECT_URI` to another `127.0.0.1` port and register it in the Spotify dashboard |
 
 ## Development
 
