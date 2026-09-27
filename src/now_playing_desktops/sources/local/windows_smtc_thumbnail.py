@@ -12,14 +12,13 @@ _THUMBNAIL_RETRY_DELAY_SECONDS = 0.3
 
 
 async def read_random_access_stream_bytes(stream) -> bytes | None:
-    from winrt.windows.storage.streams import DataReader
+    from winrt.windows.storage.streams import Buffer, InputStreamOptions
 
     size = int(stream.size)
     if size <= 0:
         return None
-    reader = DataReader(stream)
-    await reader.load_async(size)
-    buffer = await reader.read_bytes_async(size)
+    buffer = Buffer(size)
+    await stream.read_async(buffer, size, InputStreamOptions.READ_AHEAD)
     return bytes(buffer)
 
 

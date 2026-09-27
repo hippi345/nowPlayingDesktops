@@ -121,29 +121,28 @@ def test_read_thumbnail_reference_retries_empty(monkeypatch):
 
 def test_read_random_access_stream_bytes_reads_buffer(monkeypatch):
     import asyncio
+    from unittest.mock import patch
 
     pytest.importorskip("winrt.windows.storage.streams")
 
-    class FakeReader:
-        def __init__(self, _stream):
-            pass
+    class FakeBuffer:
+        def __init__(self, size):
+            self.capacity = size
+            self._data = bytearray(size)
 
-        async def load_async(self, size):
-            self._size = size
-
-        async def read_bytes_async(self, size):
-            return bytearray(b"abc"[:size])
+        def __buffer__(self, flags):
+            return memoryview(self._data)
 
     class FakeStream:
         size = 3
 
-    monkeypatch.setattr(
-        "winrt.windows.storage.streams.DataReader",
-        FakeReader,
-    )
+        async def read_async(self, buffer, count, _options):
+            buffer._data[:count] = b"abc"[:count]
+            return count
 
     async def _run():
-        data = await read_random_access_stream_bytes(FakeStream())
+        with patch("winrt.windows.storage.streams.Buffer", FakeBuffer):
+            data = await read_random_access_stream_bytes(FakeStream())
         assert data == b"abc"
 
     asyncio.run(_run())
