@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import patch
+
+from now_playing_desktops.sources.local.windows_smtc_async import _read_thumbnail_with_refetch
 
 
 def test_playing_thumbnail_returns_on_first_success_without_refetch():
-    import asyncio
-    from now_playing_desktops.sources.local.windows_smtc_async import _read_thumbnail_with_refetch
 
     read_calls = {"count": 0}
 

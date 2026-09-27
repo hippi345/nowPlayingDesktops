@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import threading
 from dataclasses import dataclass
 
 import requests
+from PIL import Image
 
 from now_playing_desktops.art_resolution import (
     ITUNES_UPGRADE_OVER_SMTC_MIN_PX,
@@ -39,8 +41,6 @@ class BackgroundArtUpgrader:
     def should_schedule(self, track: TrackPlayback) -> bool:
         if not track.art_bytes:
             return False
-        from PIL import Image
-        import io
 
         try:
             with Image.open(io.BytesIO(track.art_bytes)) as image:
@@ -60,8 +60,6 @@ class BackgroundArtUpgrader:
     ) -> None:
         if not self.should_schedule(track):
             return
-        from PIL import Image
-        import io
 
         try:
             with Image.open(io.BytesIO(track.art_bytes)) as image:
