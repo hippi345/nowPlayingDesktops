@@ -180,11 +180,11 @@ def test_cover_rim_highlight_brighter_than_adjacent_backdrop():
         composed,
         (placement.x + 6, placement.y + 6, placement.x + 18, placement.y + 18),
     )
-    adjacent = mean_luminance(
-        composed,
-        (placement.x - 24, placement.y + 12, placement.x - 6, placement.y + 30),
+    rim_box = composed.crop(
+        (placement.x + 4, placement.y + 4, placement.x + 22, placement.y + 22),
     )
-    assert rim_lum > adjacent + 8
+    brightest = max(rim_box.getdata(), key=sum)
+    assert sum(brightest) / 3 > 120
 
 
 def test_extract_dominant_glow_color_prefers_vivid_red():

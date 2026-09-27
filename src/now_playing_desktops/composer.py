@@ -6,7 +6,7 @@ import importlib.resources
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 
 from now_playing_desktops.config import FOREGROUND_HEIGHT_RATIO, MAX_COVER_UPSCALE
 
@@ -17,7 +17,8 @@ TEXT_WIDTH_COVER_FACTOR = 1.6
 TEXT_WIDTH_SCREEN_FACTOR = 0.8
 ELLIPSIS = "…"
 TEXT_SUPERSAMPLE_FACTOR = 3
-ARTIST_TEXT_ALPHA = int(255 * 0.70)
+ARTIST_TEXT_ALPHA = int(255 * 0.78)
+ARTIST_TEXT_RGB = (255, 255, 255)
 TITLE_FONT_FILE = "Inter-Bold.ttf"
 ARTIST_FONT_FILE = "Inter-Medium.ttf"
 TEXT_LINE_GAP_DIVISOR = 48
@@ -36,20 +37,19 @@ VIGNETTE_MASK_SIZE = 256
 
 # --- Glass panel ("liquid glass") ---
 GLASS_PANEL_PADDING_DIVISOR = 26
-GLASS_CORNER_RADIUS_SHORT_SIDE_FRAC = 0.045
+GLASS_CORNER_RADIUS_SHORT_SIDE_FRAC = 0.048
 GLASS_BACKDROP_EXTRA_BLUR_DIVISOR = 22
-GLASS_TINT_RGB = (12, 14, 20)
-GLASS_TINT_ALPHA = 115
-GLASS_SATURATION_BOOST = 1.20
-GLASS_INNER_BORDER_ALPHA = 46
+GLASS_TINT_RGB = (22, 24, 32)
+GLASS_TINT_ALPHA = 68
+GLASS_SATURATION_BOOST = 1.22
+GLASS_INNER_BORDER_ALPHA = 48
 GLASS_INNER_BORDER_WIDTH_REF = 1
 GLASS_INNER_BORDER_SCREEN_HEIGHT_REF = 1080
-GLASS_SPECULAR_TOP_ALPHA = 52
-GLASS_SPECULAR_HEIGHT_FRAC = 0.38
-GLASS_DROP_SHADOW_BLUR_DIVISOR = 28
-GLASS_DROP_SHADOW_OFFSET_DIVISOR = 110
-GLASS_DROP_SHADOW_ALPHA = 130
-GLASS_DROP_SHADOW_PAD_DIVISOR = 24
+GLASS_SPECULAR_TOP_ALPHA = 44
+GLASS_SPECULAR_HEIGHT_FRAC = 0.32
+GLASS_DROP_SHADOW_BLUR_FRAC = 0.038
+GLASS_DROP_SHADOW_OFFSET_FRAC = 0.012
+GLASS_DROP_SHADOW_ALPHA = 58
 
 # --- Cover frame ---
 COVER_CORNER_RADIUS_DIVISOR = 30
@@ -478,6 +478,8 @@ def _render_text_layer_supersampled(
     bold: bool,
     fill_alpha: int,
     canvas_width: int,
+    fill_rgb: tuple[int, int, int] = (255, 255, 255),
+    draw_shadow: bool = True,
 ) -> Image.Image:
     scale = TEXT_SUPERSAMPLE_FACTOR
     font = _load_font(font_size * scale, bold=bold)
@@ -491,24 +493,48 @@ def _render_text_layer_supersampled(
     draw = ImageDraw.Draw(layer)
     cx = layer_w // 2
     top = pad - bbox[1]
-    shadow_y = top + scale * 3
-    draw.text(
-        (cx, shadow_y),
-        text,
-        font=font,
-        fill=(0, 0, 0, min(255, fill_alpha + 40)),
-        anchor="mt",
-    )
+    if draw_shadow:
+        shadow_y = top + scale * 3
+        draw.text(
+            (cx, shadow_y),
+            text,
+            font=font,
+            fill=(0, 0, 0, min(255, fill_alpha + 40)),
+            anchor="mt",
+        )
     draw.text(
         (cx, top),
         text,
         font=font,
-        fill=(255, 255, 255, fill_alpha),
+        fill=(*fill_rgb, fill_alpha),
         anchor="mt",
     )
     down_w = max(1, layer_w // scale)
     down_h = max(1, layer_h // scale)
     return layer.resize((down_w, down_h), Image.Resampling.LANCZOS)
+
+
+def _clip_layer_to_rounded_rect(
+    layer: Image.Image,
+    rect: tuple[int, int, int, int],
+    *,
+    radius: int,
+) -> Image.Image:
+    x0, y0, x1, y1 = rect
+    panel_mask = Image.new("L", layer.size, 0)
+    draw = ImageDraw.Draw(panel_mask)
+    draw.rounded_rectangle(rect, radius=radius, fill=255)
+    rgba = layer.convert("RGBA")
+    red, green, blue, alpha = rgba.split()
+    clipped = ImageChops.multiply(alpha, panel_mask)
+    return Image.merge("RGBA", (red, green, blue, clipped))
+
+
+def _apply_rounded_alpha(image: Image.Image, mask: Image.Image) -> Image.Image:
+    rgba = image.convert("RGBA")
+    red, green, blue, alpha = rgba.split()
+    clipped = ImageChops.multiply(alpha, mask)
+    return Image.merge("RGBA", (red, green, blue, clipped))
 
 
 def _build_glass_panel_layer(
@@ -519,36 +545,39 @@ def _build_glass_panel_layer(
     x0, y0, x1, y1 = panel_rect
     pw, ph = x1 - x0, y1 - y0
     radius = _glass_corner_radius(pw, ph)
+    mask = _rounded_rectangle_mask((pw, ph), radius)
     crop = backdrop.crop(panel_rect).convert("RGBA")
     extra_blur = max(6.0, min(pw, ph) / GLASS_BACKDROP_EXTRA_BLUR_DIVISOR)
     crop = crop.filter(ImageFilter.GaussianBlur(radius=extra_blur))
     crop = ImageEnhance.Color(crop).enhance(GLASS_SATURATION_BOOST)
-    tint = Image.new("RGBA", crop.size, (*GLASS_TINT_RGB, GLASS_TINT_ALPHA))
+    tint = Image.new("RGBA", (pw, ph), (*GLASS_TINT_RGB, GLASS_TINT_ALPHA))
     glass = Image.alpha_composite(crop, tint)
-    mask = _rounded_rectangle_mask(crop.size, radius)
-    glass.putalpha(mask)
 
-    draw = ImageDraw.Draw(glass)
     border_w = _scale_for_height(
         screen_height,
         GLASS_INNER_BORDER_SCREEN_HEIGHT_REF,
         GLASS_INNER_BORDER_WIDTH_REF,
     )
     inset = border_w
+    border_layer = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(border_layer)
     draw.rounded_rectangle(
         (inset, inset, pw - inset - 1, ph - inset - 1),
         radius=max(1, radius - inset),
         outline=(255, 255, 255, GLASS_INNER_BORDER_ALPHA),
         width=border_w,
     )
+    glass = Image.alpha_composite(glass, border_layer)
+
     spec_h = max(8, int(ph * GLASS_SPECULAR_HEIGHT_FRAC))
     spec_layer = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
     spec_draw = ImageDraw.Draw(spec_layer)
     for row in range(spec_h):
         alpha = int(GLASS_SPECULAR_TOP_ALPHA * (1 - row / spec_h) ** 1.6)
         spec_draw.line([(0, row), (pw, row)], fill=(255, 255, 255, alpha))
+    spec_layer = _apply_rounded_alpha(spec_layer, mask)
     glass = Image.alpha_composite(glass, spec_layer)
-    return glass
+    return _apply_rounded_alpha(glass, mask)
 
 
 def _build_panel_drop_shadow(
@@ -558,16 +587,20 @@ def _build_panel_drop_shadow(
 ) -> Image.Image:
     x0, y0, x1, y1 = panel_rect
     pw, ph = x1 - x0, y1 - y0
-    radius = _glass_corner_radius(pw, ph)
-    pad = max(8, screen_height // GLASS_DROP_SHADOW_PAD_DIVISOR)
-    blur = max(10, screen_height // GLASS_DROP_SHADOW_BLUR_DIVISOR)
-    offset_y = max(3, screen_height // GLASS_DROP_SHADOW_OFFSET_DIVISOR)
-    shadow_mask = _rounded_rectangle_mask((pw, ph), radius)
-    shadow_fill = Image.new("RGBA", (pw, ph), (0, 0, 0, GLASS_DROP_SHADOW_ALPHA))
-    shadow_fill.putalpha(shadow_mask)
-    shadow_fill = shadow_fill.filter(ImageFilter.GaussianBlur(radius=blur))
+    short = min(pw, ph)
+    blur = max(10.0, short * GLASS_DROP_SHADOW_BLUR_FRAC)
+    offset_y = max(2, int(short * GLASS_DROP_SHADOW_OFFSET_FRAC))
+    shadow_w = max(32, int(pw * 0.9))
+    shadow_h = max(16, int(ph * 0.2))
+    shadow_radius = max(8, int(_glass_corner_radius(pw, ph) * 0.75))
+    shadow_mask = _rounded_rectangle_mask((shadow_w, shadow_h), shadow_radius)
+    shadow_fill = Image.new("RGBA", (shadow_w, shadow_h), (0, 0, 0, GLASS_DROP_SHADOW_ALPHA))
+    shadow_fill = _apply_rounded_alpha(shadow_fill, shadow_mask)
+    shadow_blur = shadow_fill.filter(ImageFilter.GaussianBlur(radius=blur))
     layer = Image.new("RGBA", canvas_size, (0, 0, 0, 0))
-    layer.paste(shadow_fill, (x0 - pad + pad, y0 - pad + offset_y + pad))
+    paste_x = x0 + (pw - shadow_w) // 2
+    paste_y = y1 + offset_y
+    layer.paste(shadow_blur, (paste_x, paste_y), shadow_blur)
     return layer
 
 
@@ -601,25 +634,39 @@ def compose_wallpaper(
     )
     mask = _rounded_rectangle_mask((placement.width, placement.height), placement.corner_radius)
 
+    panel_rect = layout_spec.panel
+    panel_radius = _glass_corner_radius(
+        panel_rect[2] - panel_rect[0],
+        panel_rect[3] - panel_rect[1],
+    )
     canvas = Image.alpha_composite(
         canvas,
-        _build_panel_drop_shadow(layout_spec.panel, (width, height), height),
+        _build_panel_drop_shadow(panel_rect, (width, height), height),
     )
+
+    glow_color = extract_dominant_glow_color(cover)
+    canvas = Image.alpha_composite(
+        canvas,
+        _clip_layer_to_rounded_rect(
+            _build_glow_layer(glow_color, placement, (width, height)),
+            panel_rect,
+            radius=panel_radius,
+        ),
+    )
+    canvas = Image.alpha_composite(
+        canvas,
+        _clip_layer_to_rounded_rect(
+            _build_layered_shadow_layer(placement, (width, height)),
+            panel_rect,
+            radius=panel_radius,
+        ),
+    )
+
     glass = _build_glass_panel_layer(backdrop_rgb, layout_spec.panel, height)
     px, py = layout_spec.panel[0], layout_spec.panel[1]
     glass_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     glass_layer.paste(glass, (px, py), glass)
     canvas = Image.alpha_composite(canvas, glass_layer)
-
-    glow_color = extract_dominant_glow_color(cover)
-    canvas = Image.alpha_composite(
-        canvas,
-        _build_glow_layer(glow_color, placement, (width, height)),
-    )
-    canvas = Image.alpha_composite(
-        canvas,
-        _build_layered_shadow_layer(placement, (width, height)),
-    )
 
     fg_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     fg_layer.paste(
@@ -643,6 +690,8 @@ def compose_wallpaper(
         bold=False,
         fill_alpha=ARTIST_TEXT_ALPHA,
         canvas_width=width,
+        fill_rgb=ARTIST_TEXT_RGB,
+        draw_shadow=False,
     )
     text_center_x = (layout_spec.title[0] + layout_spec.title[2]) // 2
     title_top = layout_spec.title[1]

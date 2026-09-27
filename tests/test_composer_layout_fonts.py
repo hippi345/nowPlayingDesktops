@@ -11,7 +11,9 @@ from now_playing_desktops.composer import (
     _font_path,
     _load_package_font,
     _render_text_layer_supersampled,
+    compose_wallpaper,
     plan_wallpaper_layout,
+    render_backdrop,
 )
 from tests.helpers import make_sample_cover
 
@@ -99,3 +101,35 @@ def test_centering_across_resolutions(width: int, height: int):
 
 def test_supersample_constant_is_three():
     assert TEXT_SUPERSAMPLE_FACTOR == 3
+
+
+def test_glass_panel_single_layer_rounded_corners_and_soft_shadow_below():
+    cover = make_sample_cover()
+    width, height = 1664, 1109
+    backdrop = render_backdrop(cover, width, height)
+    composed = compose_wallpaper(
+        cover,
+        title=LONG_TITLE,
+        artist="Test Artist",
+        width=width,
+        height=height,
+    )
+    layout = plan_wallpaper_layout(
+        cover,
+        title=LONG_TITLE,
+        artist="Test Artist",
+        width=width,
+        height=height,
+    )
+    px0, py0, px1, py1 = layout.panel
+    corner = (px0 + 3, py0 + 3)
+    backdrop_corner = backdrop.getpixel(corner)
+    composed_corner = composed.getpixel(corner)
+    assert sum(abs(backdrop_corner[i] - composed_corner[i]) for i in range(3)) < 28
+
+    short_side = min(px1 - px0, py1 - py0)
+    below_y = min(height - 2, py1 + int(short_side * 0.045) + 14)
+    sample_x = max(0, px0 - 10)
+    below_rgb = composed.getpixel((sample_x, below_y))
+    backdrop_below = backdrop.getpixel((sample_x, below_y))
+    assert sum(abs(below_rgb[i] - backdrop_below[i]) for i in range(3)) < 42
