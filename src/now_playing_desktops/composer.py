@@ -27,6 +27,7 @@ TEXT_BLOCK_GAP_DIVISOR = 40
 # --- Backdrop ---
 BACKDROP_BLUR_MIN_PX = 36
 BACKDROP_BLUR_SCREEN_DIVISOR = 14
+BACKDROP_BLUR_WORKING_MAX_DIM = 960
 BACKDROP_DARKEN_BLEND = 0.52
 BACKDROP_BRIGHTNESS = 1.0 - BACKDROP_DARKEN_BLEND
 
@@ -73,6 +74,8 @@ GLOW_SCALE_FRAC = 1.12
 GLOW_UPWARD_BIAS_FRAC = 0.06
 
 _FONTS_PACKAGE = "now_playing_desktops.fonts"
+_FONT_CACHE: dict[tuple[int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
+_ROUNDED_MASK_CACHE: dict[tuple[int, int, int], Image.Image] = {}
 
 
 @dataclass(frozen=True)
@@ -162,7 +165,13 @@ def _load_package_font(filename: str, size: int) -> ImageFont.FreeTypeFont | Ima
 
 
 def _load_font(size: int, *, bold: bool = True) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    return _load_package_font(TITLE_FONT_FILE if bold else ARTIST_FONT_FILE, size)
+    key = (size, bold)
+    cached = _FONT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    font = _load_package_font(TITLE_FONT_FILE if bold else ARTIST_FONT_FILE, size)
+    _FONT_CACHE[key] = font
+    return font
 
 
 def title_font_size_for_height(height: int) -> int:
@@ -275,10 +284,24 @@ def apply_vignette(image: Image.Image) -> Image.Image:
     return Image.composite(image, dark, mask)
 
 
+def _gaussian_blur_scaled(image: Image.Image, radius: float) -> Image.Image:
+    width, height = image.size
+    max_dim = max(width, height)
+    if max_dim <= BACKDROP_BLUR_WORKING_MAX_DIM:
+        return image.filter(ImageFilter.GaussianBlur(radius=radius))
+    scale = BACKDROP_BLUR_WORKING_MAX_DIM / max_dim
+    small_w = max(1, int(width * scale))
+    small_h = max(1, int(height * scale))
+    small = image.resize((small_w, small_h), Image.Resampling.BILINEAR)
+    small_radius = max(1.0, radius * scale)
+    blurred = small.filter(ImageFilter.GaussianBlur(radius=small_radius))
+    return blurred.resize((width, height), Image.Resampling.BILINEAR)
+
+
 def render_backdrop(cover: Image.Image, width: int, height: int) -> Image.Image:
     """Blur, darken, and vignette the fill-scaled cover (no foreground)."""
     backdrop = scale_cover_to_fill(cover.convert("RGB"), width, height)
-    backdrop = backdrop.filter(ImageFilter.GaussianBlur(radius=backdrop_blur_radius(width, height)))
+    backdrop = _gaussian_blur_scaled(backdrop, backdrop_blur_radius(width, height))
     darken = Image.new("RGB", (width, height), (0, 0, 0))
     backdrop = Image.blend(backdrop, darken, alpha=BACKDROP_DARKEN_BLEND)
     return apply_vignette(backdrop)
@@ -333,10 +356,15 @@ def contrast_ratio(foreground: tuple[int, int, int], background: tuple[int, int,
 
 
 def _rounded_rectangle_mask(size: tuple[int, int], radius: int) -> Image.Image:
+    key = (size[0], size[1], radius)
+    cached = _ROUNDED_MASK_CACHE.get(key)
+    if cached is not None:
+        return cached
     mask = Image.new("L", size, 0)
     draw = ImageDraw.Draw(mask)
     w, h = size
     draw.rounded_rectangle((0, 0, w - 1, h - 1), radius=radius, fill=255)
+    _ROUNDED_MASK_CACHE[key] = mask
     return mask
 
 
@@ -836,6 +864,6 @@ def _paste_text_layer(
 def save_wallpaper(image: Image.Image, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.suffix.lower() in {".jpg", ".jpeg"}:
-        image.save(path, format="JPEG", quality=95, optimize=True)
+        image.save(path, format="JPEG", quality=95, optimize=False)
     else:
-        image.save(path, format="PNG", optimize=True)
+        image.save(path, format="PNG", compress_level=1, optimize=False)

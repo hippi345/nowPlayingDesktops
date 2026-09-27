@@ -177,6 +177,23 @@ def _difference_gray(composed: Image.Image, backdrop: Image.Image) -> Image.Imag
     return diff.convert("L")
 
 
+def _downsample_for_analysis(
+    composed: Image.Image,
+    backdrop: Image.Image,
+    *,
+    max_width: int,
+) -> tuple[Image.Image, Image.Image]:
+    width, height = composed.size
+    if width <= max_width:
+        return composed, backdrop
+    scale = max_width / width
+    new_size = (max_width, max(1, int(height * scale)))
+    return (
+        composed.resize(new_size, Image.Resampling.BILINEAR),
+        backdrop.resize(new_size, Image.Resampling.BILINEAR),
+    )
+
+
 def find_backdrop_band_edges(
     composed: Image.Image,
     backdrop: Image.Image,
@@ -184,9 +201,88 @@ def find_backdrop_band_edges(
     min_span_fraction: float = 0.22,
     gradient_threshold: float = 7.5,
     max_findings: int = 8,
+    analysis_max_width: int | None = None,
 ) -> list[BandEdgeFinding]:
     """Detect long straight discontinuities between composed and pure backdrop."""
+    if analysis_max_width is not None:
+        composed, backdrop = _downsample_for_analysis(
+            composed,
+            backdrop,
+            max_width=analysis_max_width,
+        )
     diff = _difference_gray(composed, backdrop)
+    try:
+        import importlib.util
+
+        if importlib.util.find_spec("numpy") is None:
+            raise ImportError
+        return _find_backdrop_band_edges_numpy(
+            diff,
+            min_span_fraction=min_span_fraction,
+            gradient_threshold=gradient_threshold,
+            max_findings=max_findings,
+        )
+    except ImportError:
+        return _find_backdrop_band_edges_pixels(
+            diff,
+            min_span_fraction=min_span_fraction,
+            gradient_threshold=gradient_threshold,
+            max_findings=max_findings,
+        )
+
+
+def _find_backdrop_band_edges_numpy(
+    diff: Image.Image,
+    *,
+    min_span_fraction: float,
+    gradient_threshold: float,
+    max_findings: int,
+) -> list[BandEdgeFinding]:
+    import numpy as np
+
+    array = np.asarray(diff, dtype=np.int16)
+    height, width = array.shape
+    findings: list[BandEdgeFinding] = []
+
+    vert_delta = np.abs(array[1:, :] - array[:-1, :])
+    row_max = vert_delta.max(axis=1)
+    row_strong = (vert_delta > gradient_threshold).sum(axis=1)
+    min_row = int(width * min_span_fraction)
+    for y in np.where(row_strong >= min_row)[0]:
+        findings.append(
+            BandEdgeFinding(
+                orientation="horizontal",
+                index=int(y),
+                strength=float(row_max[y]),
+                span_fraction=float(row_strong[y]) / width,
+            ),
+        )
+
+    horiz_delta = np.abs(array[:, 1:] - array[:, :-1])
+    col_max = horiz_delta.max(axis=0)
+    col_strong = (horiz_delta > gradient_threshold).sum(axis=0)
+    min_col = int(height * min_span_fraction)
+    for x in np.where(col_strong >= min_col)[0]:
+        findings.append(
+            BandEdgeFinding(
+                orientation="vertical",
+                index=int(x),
+                strength=float(col_max[x]),
+                span_fraction=float(col_strong[x]) / height,
+            ),
+        )
+
+    findings.sort(key=lambda item: item.strength, reverse=True)
+    return findings[:max_findings]
+
+
+def _find_backdrop_band_edges_pixels(
+    diff: Image.Image,
+    *,
+    min_span_fraction: float,
+    gradient_threshold: float,
+    max_findings: int,
+) -> list[BandEdgeFinding]:
     width, height = diff.size
     pixels = diff.load()
     findings: list[BandEdgeFinding] = []
@@ -240,6 +336,7 @@ def assert_no_backdrop_band_edges(
     min_span_fraction: float = 0.22,
     gradient_threshold: float = 7.5,
     max_findings: int = 8,
+    analysis_max_width: int | None = None,
 ) -> None:
     backdrop = render_backdrop(cover, composed.width, composed.height)
     findings = find_backdrop_band_edges(
@@ -248,6 +345,7 @@ def assert_no_backdrop_band_edges(
         min_span_fraction=min_span_fraction,
         gradient_threshold=gradient_threshold,
         max_findings=max_findings,
+        analysis_max_width=analysis_max_width,
     )
     if layout is None:
         if findings:

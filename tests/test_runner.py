@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from now_playing_desktops.apply_timing import ApplyTiming
 from now_playing_desktops.spotify_art import TrackPlayback
 from now_playing_desktops.wallpaper_state import WallpaperSessionState
 from tests.helpers import FakePlatform, make_runner, make_test_cover, mock_load_track_cover_rgba
@@ -275,8 +276,9 @@ def test_cache_hit_skips_second_download_and_compose(tmp_path: Path):
             compose_mock,
         ),
     ):
-        first = runner._compose_path(PLAYING, 1920, 1080)
-        second = runner._compose_path(PLAYING, 1920, 1080)
+        timing = ApplyTiming()
+        first = runner._compose_path(PLAYING, 1920, 1080, timing)
+        second = runner._compose_path(PLAYING, 1920, 1080, timing)
     assert first == second
     download_mock.assert_called_once()
     compose_mock.assert_called_once()
