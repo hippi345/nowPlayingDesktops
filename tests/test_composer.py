@@ -183,22 +183,18 @@ def test_extract_dominant_glow_color_prefers_vivid_red():
     assert color[0] > color[2] + 40
 
 
-def test_glow_tint_present_near_cover_edges():
-    cover = make_sample_cover()
-    composed = compose_wallpaper(
-        cover,
-        title=SHORT_TITLE,
-        artist="Artist",
-        width=1920,
-        height=1080,
-    )
-    glow_color = extract_dominant_glow_color(cover)
+def test_glow_layer_tints_backdrop_behind_cover():
+    from now_playing_desktops.composer import _build_glow_layer
+
+    cover = Image.new("RGB", (640, 640), (220, 50, 80))
     placement = compute_cover_placement(cover, 1920, 1080)
-    near = composed.getpixel((placement.x - 8, placement.y + placement.height // 2))
-    far = composed.getpixel((40, 40))
-    near_tint = sum(abs(near[i] - glow_color[i]) for i in range(3))
-    far_tint = sum(abs(far[i] - glow_color[i]) for i in range(3))
-    assert near_tint < far_tint
+    color = extract_dominant_glow_color(cover)
+    glow_layer = _build_glow_layer(color, placement, (1920, 1080))
+    sample = (placement.x + placement.width // 2, placement.y + placement.height // 2)
+    assert glow_layer.getpixel(sample)[3] > 0
+    corner = glow_layer.getpixel((10, 10))
+    assert corner[3] == 0
+    assert color == (220, 50, 80)
 
 
 def test_title_text_contrast_against_local_backdrop():
