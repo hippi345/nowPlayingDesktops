@@ -47,7 +47,8 @@ def test_resolve_track_art_keeps_small_smtc_without_blocking_itunes(tmp_path: Pa
     session.get.assert_not_called()
 
 
-def test_try_fetch_itunes_upgrade_when_larger(tmp_path: Path):
+def test_try_fetch_itunes_upgrade_when_larger(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("NOW_PLAYING_ONLINE_ART", raising=False)
     from now_playing_desktops.art_resolution import try_fetch_itunes_upgrade
 
     small = _png_bytes((300, 300))
@@ -90,7 +91,8 @@ def test_resolve_track_art_prefers_smtc_bytes(tmp_path: Path):
     assert resolved.image_bytes == data
 
 
-def test_resolve_track_art_itunes_when_no_bytes(tmp_path: Path):
+def test_resolve_track_art_itunes_when_no_bytes(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("NOW_PLAYING_ONLINE_ART", raising=False)
     track = TrackPlayback("id", "", "Fly", "Joyce Wrice", True)
     session = MagicMock()
     session.get.side_effect = [
@@ -202,7 +204,8 @@ def test_read_random_access_stream_bytes_reads_buffer(monkeypatch):
     asyncio.run(_run())
 
 
-def test_itunes_cache_hit(tmp_path: Path):
+def test_itunes_cache_hit(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("NOW_PLAYING_ONLINE_ART", raising=False)
     session = MagicMock()
     session.get.return_value = MagicMock(
         status_code=200,

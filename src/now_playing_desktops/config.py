@@ -35,6 +35,14 @@ def compose_verification_enabled() -> bool:
     }
 
 
+def online_art_enabled() -> bool:
+    """Whether album art may be fetched over the network (iTunes Search, Spotify art URLs)."""
+    raw = os.environ.get("NOW_PLAYING_ONLINE_ART", "").strip().lower()
+    if not raw:
+        return True
+    return raw not in {"0", "false", "no", "off"}
+
+
 def user_config_dir() -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))

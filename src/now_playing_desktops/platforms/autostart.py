@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from now_playing_desktops import env_loader
-from now_playing_desktops.config import user_config_dir
+from now_playing_desktops.config import online_art_enabled, user_config_dir
 from now_playing_desktops.playback_factory import parse_source_setting
 
 
@@ -48,6 +48,7 @@ def build_run_argv(
     env_file: Path | None,
     username: str | None,
     source: str | None = None,
+    no_online_art: bool = False,
 ) -> list[str]:
     argv = [*_runner_invocation(), "run"]
     source_setting = parse_source_setting(source)
@@ -55,6 +56,8 @@ def build_run_argv(
         argv.extend(["--source", source_setting])
     if env_file is not None:
         argv.extend(["--env-file", str(env_file)])
+    if no_online_art:
+        argv.append("--no-online-art")
     if username:
         argv.append(username)
     return argv
@@ -65,8 +68,14 @@ def _windows_run_command(
     env_file: Path | None,
     username: str | None,
     source: str | None = None,
+    no_online_art: bool = False,
 ) -> str:
-    argv = build_run_argv(env_file=env_file, username=username, source=source)
+    argv = build_run_argv(
+        env_file=env_file,
+        username=username,
+        source=source,
+        no_online_art=no_online_art,
+    )
     inner = " ".join(_quote_windows_argument(part) for part in argv)
     workdir = _working_directory()
     return f'cmd /c "cd /d {_quote_windows_argument(str(workdir))} && {inner}"'
@@ -91,6 +100,7 @@ def enable_autostart(
     env_file: Path | None = None,
     username: str | None = None,
     source: str | None = None,
+    no_online_art: bool = False,
 ) -> None:
     source_setting = parse_source_setting(source)
     needs_spotify = env_loader.autostart_requires_spotify_credentials(source_setting=source_setting)
@@ -99,6 +109,7 @@ def enable_autostart(
         raise AutostartSetupError(env_loader.missing_env_file_message())
 
     env_loader.load_environment(explicit=env_file)
+    disable_online_art = no_online_art or not online_art_enabled()
     resolved_env = env_loader.find_env_file(explicit=env_file)
     if needs_spotify and (
         resolved_env is None or not env_loader.spotify_credentials_configured(explicit=env_file)
@@ -112,18 +123,21 @@ def enable_autostart(
             env_file=resolved_env,
             username=resolved_username,
             source=source_setting,
+            no_online_art=disable_online_art,
         )
     elif sys.platform == "darwin":
         _macos_enable_autostart(
             env_file=resolved_env,
             username=resolved_username,
             source=source_setting,
+            no_online_art=disable_online_art,
         )
     elif sys.platform == "linux":
         _linux_enable_autostart(
             env_file=resolved_env,
             username=resolved_username,
             source=source_setting,
+            no_online_art=disable_online_art,
         )
     else:
         raise OSError(f"Autostart not supported on {sys.platform}")
@@ -159,10 +173,16 @@ def _windows_enable_autostart(
     env_file: Path | None,
     username: str | None,
     source: str,
+    no_online_art: bool = False,
 ) -> None:
     import winreg
 
-    command = _windows_run_command(env_file=env_file, username=username, source=source)
+    command = _windows_run_command(
+        env_file=env_file,
+        username=username,
+        source=source,
+        no_online_art=no_online_art,
+    )
     with winreg.CreateKeyEx(
         winreg.HKEY_CURRENT_USER,
         r"Software\Microsoft\Windows\CurrentVersion\Run",
@@ -220,8 +240,14 @@ def _linux_enable_autostart(
     env_file: Path | None,
     username: str | None,
     source: str,
+    no_online_art: bool = False,
 ) -> None:
-    argv = build_run_argv(env_file=env_file, username=username, source=source)
+    argv = build_run_argv(
+        env_file=env_file,
+        username=username,
+        source=source,
+        no_online_art=no_online_art,
+    )
     exec_line = " ".join(_quote_desktop_exec_argument(part) for part in argv)
     workdir = _working_directory()
     path = _linux_desktop_path()
@@ -257,8 +283,14 @@ def _macos_enable_autostart(
     env_file: Path | None,
     username: str | None,
     source: str,
+    no_online_art: bool = False,
 ) -> None:
-    argv = build_run_argv(env_file=env_file, username=username, source=source)
+    argv = build_run_argv(
+        env_file=env_file,
+        username=username,
+        source=source,
+        no_online_art=no_online_art,
+    )
     plist_path = _macos_plist_path()
     plist_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {

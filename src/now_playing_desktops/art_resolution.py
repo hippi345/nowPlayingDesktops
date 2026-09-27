@@ -14,6 +14,8 @@ from urllib.parse import quote
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
+from now_playing_desktops.config import online_art_enabled
+
 logger = logging.getLogger(__name__)
 
 ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
@@ -76,6 +78,8 @@ def lookup_itunes_artwork_url(
     session: requests.Session,
     cache_dir: Path,
 ) -> str | None:
+    if not online_art_enabled():
+        return None
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_path = _itunes_cache_path(cache_dir, artist, title)
     if cache_path.is_file():
@@ -187,6 +191,8 @@ def _download_itunes_art(
     session: requests.Session,
     timeout_seconds: float = ITUNES_TIMEOUT_SECONDS,
 ) -> ResolvedArt | None:
+    if not online_art_enabled():
+        return None
     itunes_url = lookup_itunes_artwork_url(
         track.artist,
         track.title,
@@ -226,7 +232,7 @@ def try_fetch_itunes_upgrade(
     session: requests.Session | None = None,
 ) -> ItunesUpgradeResult | None:
     """Return iTunes bytes only when strictly larger than the current SMTC thumbnail."""
-    if not track.art_bytes:
+    if not online_art_enabled() or not track.art_bytes:
         return None
     http = session or requests.Session()
     upgraded = _download_itunes_art(
@@ -272,7 +278,7 @@ def resolve_track_art(
             detail=f"{len(track.art_bytes)} bytes",
         )
 
-    if track.art_url:
+    if track.art_url and online_art_enabled():
         from now_playing_desktops.spotify_art import download_album_art
 
         download_path = download_dir / f"{track.track_id}.jpg"

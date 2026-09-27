@@ -41,7 +41,8 @@ def _composed_set_count(platform: FakePlatform) -> int:
     return len([p for p in platform.set_calls if p.parent.name == "composed"])
 
 
-def test_immediate_apply_does_not_block_on_itunes(tmp_path: Path):
+def test_immediate_apply_does_not_block_on_itunes(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("NOW_PLAYING_ONLINE_ART", raising=False)
     from unittest.mock import MagicMock
 
     from now_playing_desktops.cover_art import load_track_cover
@@ -77,7 +78,8 @@ def test_immediate_apply_does_not_block_on_itunes(tmp_path: Path):
     assert _composed_set_count(platform) == 1
 
 
-def test_background_upgrade_reapplies_when_better(tmp_path: Path, caplog):
+def test_background_upgrade_reapplies_when_better(tmp_path: Path, caplog, monkeypatch):
+    monkeypatch.delenv("NOW_PLAYING_ONLINE_ART", raising=False)
     platform = FakePlatform(wallpaper=tmp_path / "orig.jpg")
     (tmp_path / "orig.jpg").write_bytes(b"orig")
     small = _png_bytes((300, 300))
@@ -119,7 +121,8 @@ def test_background_upgrade_reapplies_when_better(tmp_path: Path, caplog):
     assert "Upgraded art Apply took" in caplog.text
 
 
-def test_stale_upgrade_ignored_after_track_change(tmp_path: Path):
+def test_stale_upgrade_ignored_after_track_change(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("NOW_PLAYING_ONLINE_ART", raising=False)
     platform = FakePlatform(wallpaper=tmp_path / "orig.jpg")
     (tmp_path / "orig.jpg").write_bytes(b"orig")
     track_a = TrackPlayback("t1", "", "Song A", "Artist", True, art_bytes=_png_bytes((300, 300)))
@@ -159,7 +162,8 @@ def test_stale_upgrade_ignored_after_track_change(tmp_path: Path):
     assert _composed_set_count(platform) == composed_after_first
 
 
-def test_stale_upgrade_ignored_after_pause(tmp_path: Path):
+def test_stale_upgrade_ignored_after_pause(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("NOW_PLAYING_ONLINE_ART", raising=False)
     platform = FakePlatform(wallpaper=tmp_path / "orig.jpg")
     (tmp_path / "orig.jpg").write_bytes(b"orig")
     playing = TrackPlayback("t1", "", "Song", "Artist", True, art_bytes=_png_bytes((300, 300)))

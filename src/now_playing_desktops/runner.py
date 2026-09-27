@@ -18,6 +18,7 @@ from pathlib import Path
 import requests
 
 from now_playing_desktops.apply_timing import ApplyTiming
+from now_playing_desktops.config import online_art_enabled
 from now_playing_desktops.art_background_upgrade import BackgroundArtUpgrader
 from now_playing_desktops.art_cache import ComposedArtCache
 from now_playing_desktops.compose_verify import schedule_compose_quality_verification
@@ -469,6 +470,8 @@ class NowPlayingRunner:
             logger.info("Updated wallpaper for %s — %s (iTunes art)", track.artist, track.title)
 
     def _schedule_itunes_upgrade_if_needed(self, track: TrackPlayback) -> None:
+        if not online_art_enabled():
+            return
         if not self._art_upgrader.should_schedule(track):
             return
         self._art_upgrader.schedule(
