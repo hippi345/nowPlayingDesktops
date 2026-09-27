@@ -8,10 +8,14 @@ import pytest
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
 def test_console_close_handler_registers_restore():
+    import now_playing_desktops.platforms.windows_console as windows_console
     from now_playing_desktops.platforms.windows_console import (
         CTRL_CLOSE_EVENT,
         register_console_restore_handler,
     )
+
+    windows_console._registered_handler = None
+    windows_console._win_handler_ref = None
 
     restore = MagicMock()
     handler_ref = None
