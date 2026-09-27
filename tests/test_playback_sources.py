@@ -148,6 +148,92 @@ def test_local_without_art_still_applies_wallpaper(tmp_path: Path, caplog):
     assert "Track art source: placeholder" in caplog.text
 
 
+def test_local_playing_pause_resume_state_machine(tmp_path: Path):
+    platform = FakePlatform(wallpaper=tmp_path / "orig.jpg")
+    (tmp_path / "orig.jpg").write_bytes(b"orig")
+    local_track = TrackPlayback(
+        track_id="local",
+        art_url="",
+        title="Waiting On August",
+        artist="Jake Miller",
+        is_playing=True,
+        art_bytes=b"thumb",
+    )
+    paused = TrackPlayback(
+        track_id=local_track.track_id,
+        art_url="",
+        title=local_track.title,
+        artist=local_track.artist,
+        is_playing=False,
+        art_bytes=local_track.art_bytes,
+    )
+    runner = make_runner(tmp_path, platform=platform)
+    restore_mock = MagicMock(side_effect=runner.restore_original_wallpaper)
+    runner.restore_original_wallpaper = restore_mock
+
+    with (
+        patch(
+            "now_playing_desktops.runner.fetch_playback_for_runner",
+            return_value=local_track,
+        ),
+        patch(
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
+        ),
+    ):
+        runner.startup()
+        runner.apply_playback_once()
+        assert len(platform.set_calls) == 1
+
+    with patch(
+        "now_playing_desktops.runner.fetch_playback_for_runner",
+        return_value=paused,
+    ):
+        runner.apply_playback_once()
+        runner.apply_playback_once()
+    assert restore_mock.call_count == 1
+    assert platform.wallpaper == tmp_path / "orig.jpg"
+
+    with patch(
+        "now_playing_desktops.runner.fetch_playback_for_runner",
+        return_value=local_track,
+    ):
+        runner.apply_playback_once()
+    composed_calls = [p for p in platform.set_calls if p.parent.name == "composed"]
+    assert len(composed_calls) == 2
+
+
+def test_spotify_provider_pause_resume_parity(tmp_path: Path):
+    platform = FakePlatform(wallpaper=tmp_path / "orig.jpg")
+    (tmp_path / "orig.jpg").write_bytes(b"orig")
+    runner = make_runner(tmp_path, platform=platform)
+    with (
+        patch(
+            "now_playing_desktops.runner.fetch_playback_for_runner",
+            return_value=PLAYING,
+        ),
+        patch(
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
+        ),
+    ):
+        runner.startup()
+        runner.apply_playback_once()
+    with patch(
+        "now_playing_desktops.runner.fetch_playback_for_runner",
+        return_value=PAUSED,
+    ):
+        runner.apply_playback_once()
+    assert platform.wallpaper == tmp_path / "orig.jpg"
+    with patch(
+        "now_playing_desktops.runner.fetch_playback_for_runner",
+        return_value=PLAYING,
+    ):
+        runner.apply_playback_once()
+    composed_calls = [p for p in platform.set_calls if p.parent.name == "composed"]
+    assert len(composed_calls) == 2
+
+
 def test_pause_restore_parity_through_shared_pipeline(tmp_path: Path):
     platform = FakePlatform(wallpaper=tmp_path / "orig.jpg")
     (tmp_path / "orig.jpg").write_bytes(b"orig")

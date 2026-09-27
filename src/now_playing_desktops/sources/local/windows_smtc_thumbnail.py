@@ -7,7 +7,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_THUMBNAIL_RETRY_ATTEMPTS = 4
+_THUMBNAIL_RETRY_ATTEMPTS = 5
 _THUMBNAIL_RETRY_DELAY_SECONDS = 0.3
 
 

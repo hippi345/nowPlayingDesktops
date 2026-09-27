@@ -37,8 +37,40 @@ def test_artist_names_match_fuzzy():
     assert not artist_names_match("Artist A", "Totally Different")
 
 
+def test_resolve_track_art_upgrades_small_smtc_with_itunes(tmp_path: Path, caplog):
+    import logging
+
+    small = _png_bytes((300, 300))
+    large = _png_bytes((1000, 1000), color=(200, 10, 10))
+    track = TrackPlayback("id", "", "Title", "Artist", True, art_bytes=small)
+    session = MagicMock()
+    session.get.side_effect = [
+        MagicMock(
+            status_code=200,
+            json=lambda: {
+                "results": [{"artistName": "Artist", "artworkUrl100": "https://x/100x100bb.jpg"}]
+            },
+        ),
+        MagicMock(status_code=200, content=large),
+    ]
+    with caplog.at_level(logging.INFO):
+        resolved = resolve_track_art(track, download_dir=tmp_path, session=session)
+    assert resolved.source == "itunes"
+    assert resolved.width == 1000
+    assert "Preferring iTunes art over SMTC thumbnail" in caplog.text
+
+
+def test_resolve_track_art_keeps_large_smtc_without_itunes_call(tmp_path: Path):
+    data = _png_bytes((800, 800))
+    track = TrackPlayback("id", "", "Title", "Artist", True, art_bytes=data)
+    session = MagicMock()
+    resolved = resolve_track_art(track, download_dir=tmp_path, session=session)
+    assert resolved.source == "smtc_thumbnail"
+    session.get.assert_not_called()
+
+
 def test_resolve_track_art_prefers_smtc_bytes(tmp_path: Path):
-    data = _png_bytes()
+    data = _png_bytes((700, 700))
     track = TrackPlayback("id", "", "Title", "Artist", True, art_bytes=data)
     resolved = resolve_track_art(track, download_dir=tmp_path)
     assert resolved.source == "smtc_thumbnail"

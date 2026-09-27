@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 ITUNES_TIMEOUT_SECONDS = 5.0
 PLACEHOLDER_SIZE = 1000
+ITUNES_UPGRADE_OVER_SMTC_MIN_PX = 600
 
 
 @dataclass(frozen=True)
@@ -168,6 +169,43 @@ def _image_to_png_bytes(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
+def _download_itunes_art(
+    track,
+    *,
+    download_dir: Path,
+    session: requests.Session,
+) -> ResolvedArt | None:
+    itunes_url = lookup_itunes_artwork_url(
+        track.artist,
+        track.title,
+        session=session,
+        cache_dir=download_dir,
+    )
+    if not itunes_url:
+        return None
+    try:
+        response = session.get(itunes_url, timeout=ITUNES_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        data = response.content
+        with Image.open(io.BytesIO(data)) as image:
+            width, height = image.size
+        return ResolvedArt(
+            image_bytes=data,
+            source="itunes",
+            width=width,
+            height=height,
+            detail=itunes_url,
+        )
+    except (requests.RequestException, OSError):
+        logger.warning(
+            "Failed to download iTunes artwork for %s — %s",
+            track.artist,
+            track.title,
+            exc_info=True,
+        )
+        return None
+
+
 def resolve_track_art(
     track,
     *,
@@ -180,13 +218,25 @@ def resolve_track_art(
     if track.art_bytes:
         with Image.open(io.BytesIO(track.art_bytes)) as image:
             width, height = image.size
-        return ResolvedArt(
+        smtc = ResolvedArt(
             image_bytes=track.art_bytes,
             source="smtc_thumbnail",
             width=width,
             height=height,
             detail=f"{len(track.art_bytes)} bytes",
         )
+        if max(width, height) < ITUNES_UPGRADE_OVER_SMTC_MIN_PX:
+            upgraded = _download_itunes_art(track, download_dir=download_dir, session=http)
+            if upgraded and max(upgraded.width, upgraded.height) > max(width, height):
+                logger.info(
+                    "Preferring iTunes art over SMTC thumbnail (%dx%d -> %dx%d)",
+                    width,
+                    height,
+                    upgraded.width,
+                    upgraded.height,
+                )
+                return upgraded
+        return smtc
 
     if track.art_url:
         from now_playing_desktops.spotify_art import download_album_art
@@ -204,33 +254,9 @@ def resolve_track_art(
             detail=track.art_url,
         )
 
-    itunes_url = lookup_itunes_artwork_url(
-        track.artist,
-        track.title,
-        session=http,
-        cache_dir=download_dir,
-    )
-    if itunes_url:
-        try:
-            response = http.get(itunes_url, timeout=ITUNES_TIMEOUT_SECONDS)
-            response.raise_for_status()
-            data = response.content
-            with Image.open(io.BytesIO(data)) as image:
-                width, height = image.size
-            return ResolvedArt(
-                image_bytes=data,
-                source="itunes",
-                width=width,
-                height=height,
-                detail=itunes_url,
-            )
-        except (requests.RequestException, OSError):
-            logger.warning(
-                "Failed to download iTunes artwork for %s — %s",
-                track.artist,
-                track.title,
-                exc_info=True,
-            )
+    itunes = _download_itunes_art(track, download_dir=download_dir, session=http)
+    if itunes is not None:
+        return itunes
 
     placeholder = render_placeholder_cover(track.title, track.artist)
     png_bytes = _image_to_png_bytes(placeholder)

@@ -128,6 +128,7 @@ def test_idle_no_original_restore_logged_once(tmp_path: Path, caplog):
     platform = FakePlatform(wallpaper=tmp_path / "orig.jpg")
     (tmp_path / "orig.jpg").write_bytes(b"x")
     runner = make_runner(tmp_path, platform=platform)
+    runner._now_playing_wallpaper_active = True
     with (
         patch(
             "now_playing_desktops.runner.fetch_playback_for_runner",
@@ -144,6 +145,113 @@ def test_idle_no_original_restore_logged_once(tmp_path: Path, caplog):
         if r.levelno == logging.INFO and r.message == "No saved original wallpaper to restore"
     ]
     assert len(info_lines) == 1
+
+
+def test_pause_restores_once_then_skips_while_still_paused(tmp_path: Path):
+    original = tmp_path / "original.jpg"
+    original.write_bytes(b"orig")
+    platform = FakePlatform(wallpaper=original)
+    runner = make_runner(tmp_path, platform=platform)
+    restore_mock = MagicMock(return_value=True)
+    runner.restore_original_wallpaper = restore_mock
+
+    with (
+        patch(
+            "now_playing_desktops.runner.fetch_playback_for_runner",
+            return_value=PLAYING,
+        ),
+        patch(
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
+        ),
+    ):
+        runner.startup()
+        runner.apply_playback_once()
+        assert runner._now_playing_wallpaper_active is True
+
+    with patch(
+        "now_playing_desktops.runner.fetch_playback_for_runner",
+        return_value=PAUSED,
+    ):
+        runner.apply_playback_once()
+        runner.apply_playback_once()
+        runner.apply_playback_once()
+
+    assert restore_mock.call_count == 1
+    assert runner._now_playing_wallpaper_active is False
+
+
+def test_resume_same_track_reapplies_without_recompose_when_cached(tmp_path: Path):
+    original = tmp_path / "original.jpg"
+    original.write_bytes(b"orig")
+    platform = FakePlatform(wallpaper=original)
+    runner = make_runner(tmp_path, platform=platform)
+    compose_mock = MagicMock(
+        side_effect=lambda cover, **kwargs: __import__(
+            "now_playing_desktops.composer",
+            fromlist=["compose_wallpaper"],
+        ).compose_wallpaper(cover, **kwargs)
+    )
+
+    with (
+        patch(
+            "now_playing_desktops.runner.fetch_playback_for_runner",
+            return_value=PLAYING,
+        ),
+        patch(
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
+        ),
+        patch("now_playing_desktops.runner.compose_wallpaper", compose_mock),
+    ):
+        runner.startup()
+        runner.apply_playback_once()
+        assert len(platform.set_calls) == 1
+
+        with patch(
+            "now_playing_desktops.runner.fetch_playback_for_runner",
+            return_value=PAUSED,
+        ):
+            runner.apply_playback_once()
+        assert platform.wallpaper == original
+
+        with patch(
+            "now_playing_desktops.runner.fetch_playback_for_runner",
+            return_value=PLAYING,
+        ):
+            runner.apply_playback_once()
+        assert compose_mock.call_count == 1
+        composed_calls = [p for p in platform.set_calls if p.parent.name == "composed"]
+        assert len(composed_calls) == 2
+
+
+def test_spotify_closed_restores_when_session_disappears(tmp_path: Path):
+    original = tmp_path / "original.jpg"
+    original.write_bytes(b"orig")
+    platform = FakePlatform(wallpaper=original)
+    runner = make_runner(tmp_path, platform=platform)
+    restore_mock = MagicMock(return_value=True)
+    runner.restore_original_wallpaper = restore_mock
+
+    with (
+        patch(
+            "now_playing_desktops.runner.fetch_playback_for_runner",
+            return_value=PLAYING,
+        ),
+        patch(
+            "now_playing_desktops.runner.load_track_cover",
+            side_effect=mock_load_track_cover_rgba,
+        ),
+    ):
+        runner.startup()
+        runner.apply_playback_once()
+
+    with patch("now_playing_desktops.runner.fetch_playback_for_runner", return_value=None):
+        runner.apply_playback_once()
+        runner.apply_playback_once()
+
+    assert restore_mock.call_count == 1
+    assert runner._now_playing_wallpaper_active is False
 
 
 def test_cache_hit_skips_second_download_and_compose(tmp_path: Path):

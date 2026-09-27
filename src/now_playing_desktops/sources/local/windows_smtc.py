@@ -11,6 +11,9 @@ from now_playing_desktops.sources.local.windows_smtc_thumbnail import read_thumb
 
 logger = logging.getLogger(__name__)
 
+_THUMBNAIL_REFETCH_ATTEMPTS = 5
+_THUMBNAIL_REFETCH_DELAY_SECONDS = 0.3
+
 
 def _winrt_available() -> bool:
     try:
@@ -22,6 +25,34 @@ def _winrt_available() -> bool:
         return True
     except ImportError:
         return False
+
+
+def _session_is_playing(playback) -> bool:
+    from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionPlaybackStatus
+
+    status = playback.playback_status
+    return status == GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING
+
+
+async def _read_thumbnail_with_refetch(session, props) -> bytes | None:
+    current_props = props
+    for attempt in range(_THUMBNAIL_REFETCH_ATTEMPTS):
+        thumb = current_props.thumbnail
+        if thumb is not None:
+            art_bytes = await read_thumbnail_reference_bytes(
+                thumb,
+                attempts=1,
+                delay_seconds=0,
+            )
+            if art_bytes:
+                return art_bytes
+        if attempt + 1 >= _THUMBNAIL_REFETCH_ATTEMPTS:
+            break
+        await asyncio.sleep(_THUMBNAIL_REFETCH_DELAY_SECONDS)
+        refreshed = await session.try_get_media_properties_async()
+        if refreshed is not None:
+            current_props = refreshed
+    return None
 
 
 async def _read_spotify_session_async() -> TrackPlayback | None:
@@ -40,21 +71,16 @@ async def _read_spotify_session_async() -> TrackPlayback | None:
         artist = props.artist or "Unknown Artist"
         album = props.album_title or ""
         playback = session.get_playback_info()
-        status = playback.playback_status
-        # GlobalSystemMediaTransportControlsPlaybackStatus.playing == 4
-        is_playing = int(status) == 4
+        is_playing = _session_is_playing(playback)
 
-        art_bytes: bytes | None = None
-        thumb = props.thumbnail
-        if thumb is not None:
-            art_bytes = await read_thumbnail_reference_bytes(thumb)
-            if art_bytes:
-                logger.debug(
-                    "Read SMTC thumbnail for %s — %s (%s bytes)",
-                    artist,
-                    title,
-                    len(art_bytes),
-                )
+        art_bytes = await _read_thumbnail_with_refetch(session, props)
+        if art_bytes:
+            logger.debug(
+                "Read SMTC thumbnail for %s — %s (%s bytes)",
+                artist,
+                title,
+                len(art_bytes),
+            )
 
         track_id = stable_track_id(title=title, artist=artist, album=album)
         return TrackPlayback(

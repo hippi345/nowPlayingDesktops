@@ -59,7 +59,8 @@ class NowPlayingRunner:
         self.deps = deps
         self._composed_cache = ComposedArtCache(deps.cache_dir / "composed")
         self._download_dir = deps.cache_dir / "downloads"
-        self._last_applied: tuple[str, str] | None = None
+        self._last_composed_identity: tuple[str, str] | None = None
+        self._now_playing_wallpaper_active: bool = False
         self._state = WallpaperSessionState.load(deps.state_path)
         self._restore_registered = False
         self._render_errors_logged: set[str] = set()
@@ -78,7 +79,6 @@ class NowPlayingRunner:
                 logger.exception("Failed to apply wallpaper restore snapshot")
                 return False
             self._clear_restored_session(state)
-            self._last_applied = None
             logger.info("Restored original wallpaper from snapshot")
             return True
 
@@ -100,7 +100,6 @@ class NowPlayingRunner:
             return False
         self.deps.platform.set_wallpaper(path)
         self._clear_restored_session(state)
-        self._last_applied = None
         logger.info("Restored original wallpaper: %s", path)
         return True
 
@@ -446,17 +445,23 @@ class NowPlayingRunner:
                 composed_path = self._compose_path(track, width, height)
                 self.deps.platform.set_wallpaper(composed_path, screen_id=screen_id)
 
+    def _handle_idle_playback(self) -> None:
+        if not self._now_playing_wallpaper_active:
+            return
+        self.restore_original_wallpaper()
+        self._now_playing_wallpaper_active = False
+
     def apply_playback_once(self) -> None:
         track = fetch_playback_for_runner(self.deps)
         if track is None or not track.is_playing:
-            self.restore_original_wallpaper()
+            self._handle_idle_playback()
             return
 
         if not self._state.original_wallpaper_path and not self._state.original_wallpaper_snapshot:
             self._ensure_original_saved(activate_session=True)
 
-        key = (track.track_id, track.art_cache_key)
-        if key == self._last_applied:
+        identity = (track.track_id, track.art_cache_key)
+        if self._now_playing_wallpaper_active and identity == self._last_composed_identity:
             logger.debug("Track unchanged; skipping wallpaper update")
             return
 
@@ -468,7 +473,8 @@ class NowPlayingRunner:
 
         self._render_errors_logged.discard(track.track_id)
         self._logged_idle_no_original_restore = False
-        self._last_applied = key
+        self._last_composed_identity = identity
+        self._now_playing_wallpaper_active = True
         self._state.session_active = True
         self._state.save(self.deps.state_path)
         logger.info("Updated wallpaper for %s — %s", track.artist, track.title)
