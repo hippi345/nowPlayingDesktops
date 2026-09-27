@@ -70,11 +70,8 @@ class NowPlayingRunner:
                 self.deps.platform.apply_restore_snapshot(snapshot)
             except Exception:
                 logger.exception("Failed to apply wallpaper restore snapshot")
-                state.session_active = False
-                state.save(self.deps.state_path)
                 return False
-            state.session_active = False
-            state.save(self.deps.state_path)
+            self._clear_restored_session(state)
             self._last_applied = None
             logger.info("Restored original wallpaper from snapshot")
             return True
@@ -82,21 +79,25 @@ class NowPlayingRunner:
         original = state.original_wallpaper_path
         if not original:
             logger.info("No saved original wallpaper to restore")
-            state.session_active = False
-            state.save(self.deps.state_path)
+            if state.session_active:
+                state.clear_restore_data()
+                state.save(self.deps.state_path)
+                self._state = WallpaperSessionState.load(self.deps.state_path)
             return False
         path = Path(original)
         if not path.is_file():
             logger.warning("Saved original wallpaper missing: %s", path)
-            state.session_active = False
-            state.save(self.deps.state_path)
             return False
         self.deps.platform.set_wallpaper(path)
-        state.session_active = False
-        state.save(self.deps.state_path)
+        self._clear_restored_session(state)
         self._last_applied = None
         logger.info("Restored original wallpaper: %s", path)
         return True
+
+    def _clear_restored_session(self, state: WallpaperSessionState) -> None:
+        state.clear_restore_data()
+        state.save(self.deps.state_path)
+        self._state = WallpaperSessionState.load(self.deps.state_path)
 
     def _ensure_original_saved(self, *, activate_session: bool) -> None:
         generated_dir = self.deps.cache_dir.resolve()
@@ -111,8 +112,10 @@ class NowPlayingRunner:
             return
         if original is not None:
             self._state.original_wallpaper_path = str(original.resolve())
-        if hasattr(self.deps.platform, "capture_restore_snapshot"):
-            self._state.original_wallpaper_snapshot = self.deps.platform.capture_restore_snapshot()
+            if hasattr(self.deps.platform, "capture_restore_snapshot"):
+                self._state.original_wallpaper_snapshot = (
+                    self.deps.platform.capture_restore_snapshot()
+                )
         self._state.generated_wallpaper_dir = str(generated_dir)
         if activate_session:
             self._state.session_active = True
@@ -185,6 +188,12 @@ class NowPlayingRunner:
         if track is None or not track.is_playing:
             self.restore_original_wallpaper()
             return
+
+        if (
+            not self._state.original_wallpaper_path
+            and not self._state.original_wallpaper_snapshot
+        ):
+            self._ensure_original_saved(activate_session=True)
 
         key = (track.track_id, track.art_url)
         if key == self._last_applied:

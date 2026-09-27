@@ -38,6 +38,13 @@ class WallpaperSessionState:
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
 
+    def clear_restore_data(self) -> None:
+        """Drop persisted restore payload after a successful restore."""
+        self.original_wallpaper_path = None
+        self.original_wallpaper_snapshot = None
+        self.session_active = False
+        self.generated_wallpaper_dir = None
+
 
 def path_is_under_directory(candidate: Path, directory: Path) -> bool:
     try:

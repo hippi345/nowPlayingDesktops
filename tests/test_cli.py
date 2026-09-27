@@ -5,6 +5,17 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from now_playing_desktops.cli import build_parser, main
+from now_playing_desktops.spotify_art import TrackPlayback
+from now_playing_desktops.wallpaper_state import WallpaperSessionState
+from tests.helpers import FakePlatform, make_test_cover
+
+PLAYING = TrackPlayback(
+    track_id="t1",
+    art_url="https://example.com/art.jpg",
+    title="Song",
+    artist="Artist",
+    is_playing=True,
+)
 
 
 def test_cli_parser_accepts_run_restore_and_once():
@@ -93,6 +104,62 @@ def test_cli_restore_command(tmp_path: Path):
 
     assert code == 0
     runner.restore_original_wallpaper.assert_called_once()
+
+
+def test_cli_explicit_restore_twice_second_is_nothing_to_restore(tmp_path: Path, capsys):
+    original = tmp_path / "original.jpg"
+    original.write_bytes(b"orig")
+    platform = FakePlatform(wallpaper=original)
+    state_path = tmp_path / "state.json"
+    WallpaperSessionState(
+        original_wallpaper_path=str(original),
+        original_wallpaper_snapshot={"backend": "fake", "path": str(original)},
+        session_active=True,
+    ).save(state_path)
+
+    with (
+        patch("now_playing_desktops.cli.get_platform", return_value=platform),
+        patch("now_playing_desktops.cli.default_cache_dir", return_value=tmp_path / "cache"),
+    ):
+        assert main(["restore", "--state-file", str(state_path)]) == 0
+        assert main(["restore", "--state-file", str(state_path)]) == 0
+
+    out = capsys.readouterr().out
+    assert out.count("nothing to restore") == 1
+    assert WallpaperSessionState.load(state_path).session_active is False
+    assert WallpaperSessionState.load(state_path).original_wallpaper_snapshot is None
+
+
+def test_cli_run_once_then_double_restore(tmp_path: Path, capsys):
+    original = tmp_path / "original.jpg"
+    original.write_bytes(b"orig")
+    platform = FakePlatform(wallpaper=original)
+    state_path = tmp_path / "state.json"
+
+    with (
+        patch("now_playing_desktops.cli.get_platform", return_value=platform),
+        patch(
+            "now_playing_desktops.cli.create_spotify_client",
+            return_value=(MagicMock(), MagicMock(), MagicMock()),
+        ),
+        patch("now_playing_desktops.cli.default_cache_dir", return_value=tmp_path / "cache"),
+        patch("now_playing_desktops.cli.state_file_path", return_value=state_path),
+        patch(
+            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            return_value=PLAYING,
+        ),
+        patch(
+            "now_playing_desktops.runner.download_album_art",
+            side_effect=lambda _u, dest, session=None: make_test_cover().save(
+                dest, format="JPEG"
+            ),
+        ),
+    ):
+        assert main(["run", "user", "--once"]) == 0
+        assert main(["restore", "--state-file", str(state_path)]) == 0
+        assert main(["restore", "--state-file", str(state_path)]) == 0
+
+    assert capsys.readouterr().out.count("nothing to restore") == 1
 
 
 def test_cli_run_reports_unsupported_platform():

@@ -190,4 +190,55 @@ def test_signal_and_atexit_restore_original_wallpaper(tmp_path: Path):
         runner._register_shutdown_handlers()
     assert registered
     registered[0]()
-    assert WallpaperSessionState.load(tmp_path / "state.json").session_active is False
+    state = WallpaperSessionState.load(tmp_path / "state.json")
+    assert state.session_active is False
+    assert state.original_wallpaper_path is None
+    assert state.original_wallpaper_snapshot is None
+
+
+def test_second_restore_after_run_reports_nothing(tmp_path: Path, capsys):
+    original = tmp_path / "original.jpg"
+    original.write_bytes(b"orig")
+    platform = FakePlatform(wallpaper=original)
+    state_path = tmp_path / "state.json"
+    runner = make_runner(tmp_path, platform=platform)
+    runner.deps.state_path = state_path
+
+    with (
+        patch(
+            "now_playing_desktops.runner.fetch_playback_with_backoff",
+            return_value=PLAYING,
+        ),
+        patch(
+            "now_playing_desktops.runner.download_album_art",
+            side_effect=lambda _u, dest, session=None: _write_cover_jpeg(dest),
+        ),
+    ):
+        runner.startup()
+        runner.apply_playback_once()
+
+    assert runner.restore_original_wallpaper() is True
+    cleared = WallpaperSessionState.load(state_path)
+    assert cleared.session_active is False
+    assert cleared.original_wallpaper_snapshot is None
+    assert cleared.original_wallpaper_path is None
+    assert runner.restore_original_wallpaper() is False
+
+
+def test_failed_restore_keeps_session_state(tmp_path: Path):
+    state_path = tmp_path / "state.json"
+    snapshot = {"backend": "fake", "path": "/missing.png"}
+    WallpaperSessionState(
+        original_wallpaper_snapshot=snapshot,
+        session_active=True,
+    ).save(state_path)
+    platform = FakePlatform()
+    platform.apply_restore_snapshot = MagicMock(side_effect=RuntimeError("boom"))
+
+    runner = make_runner(tmp_path, platform=platform)
+    runner.deps.state_path = state_path
+    assert runner.restore_original_wallpaper() is False
+
+    loaded = WallpaperSessionState.load(state_path)
+    assert loaded.session_active is True
+    assert loaded.original_wallpaper_snapshot == snapshot
