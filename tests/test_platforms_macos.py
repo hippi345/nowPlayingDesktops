@@ -26,6 +26,28 @@ def test_macos_set_all_screens_via_osascript(tmp_path: Path):
             assert "every desktop" in run_mock.call_args[0][0][-1]
 
 
+def test_macos_osascript_escapes_spaces_and_quotes(tmp_path: Path):
+    if sys.platform == "win32":
+        nested = tmp_path / "my wall folder"
+        nested.mkdir()
+        image = nested / "bg.jpg"
+        image.write_bytes(b"x")
+    else:
+        nested = tmp_path / 'my "wall" folder'
+        nested.mkdir()
+        image = nested / "bg.jpg"
+        image.write_bytes(b"x")
+    platform = MacOSWallpaperPlatform()
+    with patch("now_playing_desktops.platforms.macos.subprocess.run") as run_mock:
+        platform._set_all_screens(image)
+    script = run_mock.call_args[0][0][-1]
+    assert "every desktop" in script
+    if sys.platform == "win32":
+        assert "my wall folder" in script
+    else:
+        assert '\\"wall\\"' in script
+
+
 def test_macos_capture_restore_per_screen(tmp_path: Path):
     a = tmp_path / "a.jpg"
     b = tmp_path / "b.jpg"
