@@ -19,7 +19,7 @@ class ComposedArtCache:
     def _key_path(
         self,
         track_id: str,
-        art_url: str,
+        art_material_key: str,
         width: int,
         height: int,
         *,
@@ -27,14 +27,14 @@ class ComposedArtCache:
     ) -> Path:
         layout_part = f"|{layout_signature}" if layout_signature else ""
         digest = hashlib.sha256(
-            f"{COMPOSED_CACHE_VERSION}{layout_part}|{track_id}|{art_url}|{width}x{height}".encode(),
+            f"{COMPOSED_CACHE_VERSION}{layout_part}|{track_id}|{art_material_key}|{width}x{height}".encode(),
         ).hexdigest()[:32]
         return self.cache_dir / f"{digest}.png"
 
     def get(
         self,
         track_id: str,
-        art_url: str,
+        art_material_key: str,
         width: int,
         height: int,
         *,
@@ -42,7 +42,7 @@ class ComposedArtCache:
     ) -> Path | None:
         path = self._key_path(
             track_id,
-            art_url,
+            art_material_key,
             width,
             height,
             layout_signature=layout_signature,
@@ -55,7 +55,7 @@ class ComposedArtCache:
     def put(
         self,
         track_id: str,
-        art_url: str,
+        art_material_key: str,
         width: int,
         height: int,
         source: Path,
@@ -64,7 +64,7 @@ class ComposedArtCache:
     ) -> Path:
         dest = self._key_path(
             track_id,
-            art_url,
+            art_material_key,
             width,
             height,
             layout_signature=layout_signature,

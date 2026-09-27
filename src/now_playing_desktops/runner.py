@@ -3,23 +3,30 @@
 from __future__ import annotations
 
 import atexit
+import faulthandler
 import logging
 import os
 import signal
 import sys
 import tempfile
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import requests
-from PIL import Image
 
+from now_playing_desktops.apply_timing import ApplyTiming
+from now_playing_desktops.art_background_upgrade import BackgroundArtUpgrader
 from now_playing_desktops.art_cache import ComposedArtCache
+from now_playing_desktops.compose_verify import schedule_compose_quality_verification
 from now_playing_desktops.composer import compose_wallpaper, save_wallpaper
+from now_playing_desktops.config import online_art_enabled
 from now_playing_desktops.cover_art import load_track_cover
 from now_playing_desktops.platforms.base import WallpaperPlatform
 from now_playing_desktops.playback_types import TrackPlayback
+from now_playing_desktops.poll_watchdog import PollStallWatchdog
 from now_playing_desktops.sources.base import PlaybackProvider
 from now_playing_desktops.wallpaper_state import (
     WallpaperSessionState,
@@ -59,11 +66,20 @@ class NowPlayingRunner:
         self.deps = deps
         self._composed_cache = ComposedArtCache(deps.cache_dir / "composed")
         self._download_dir = deps.cache_dir / "downloads"
-        self._last_applied: tuple[str, str] | None = None
+        self._last_applied_track_id: str | None = None
+        self._now_playing_wallpaper_active: bool = False
+        self._upgraded_art_bytes: dict[str, bytes] = {}
+        self._upgrade_attempted_track_ids: set[str] = set()
         self._state = WallpaperSessionState.load(deps.state_path)
         self._restore_registered = False
         self._render_errors_logged: set[str] = set()
         self._logged_idle_no_original_restore = False
+        self._poll_tick = 0
+        self._last_poll_ok_monotonic = time.monotonic()
+        self._last_heartbeat_monotonic = time.monotonic()
+        self._last_poll_state = "unknown"
+        self._art_upgrader = BackgroundArtUpgrader()
+        self._upgrade_apply_lock = threading.Lock()
 
     def _sleep(self, seconds: float) -> None:
         self.deps.sleep(seconds)
@@ -78,7 +94,6 @@ class NowPlayingRunner:
                 logger.exception("Failed to apply wallpaper restore snapshot")
                 return False
             self._clear_restored_session(state)
-            self._last_applied = None
             logger.info("Restored original wallpaper from snapshot")
             return True
 
@@ -100,7 +115,6 @@ class NowPlayingRunner:
             return False
         self.deps.platform.set_wallpaper(path)
         self._clear_restored_session(state)
-        self._last_applied = None
         logger.info("Restored original wallpaper: %s", path)
         return True
 
@@ -199,24 +213,30 @@ class NowPlayingRunner:
         track: TrackPlayback,
         width: int,
         height: int,
+        timing: ApplyTiming,
     ) -> Path:
-        cached = self._composed_cache.get(track.track_id, track.art_cache_key, width, height)
+        material = track.composed_art_material_key
+        cached = self._composed_cache.get(track.track_id, material, width, height)
         if cached:
+            timing.note_cache("hit")
             logger.debug("Cache hit for %s at %sx%s", track.track_id, width, height)
             return cached
 
-        cover = load_track_cover(
-            track,
-            download_dir=self._download_dir,
-            session=self.deps.session,
-        )
-        composed = compose_wallpaper(
-            cover,
-            title=track.title,
-            artist=track.artist,
-            width=width,
-            height=height,
-        )
+        timing.note_cache("miss")
+        with timing.stage("fetch"):
+            cover = load_track_cover(
+                track,
+                download_dir=self._download_dir,
+                session=self.deps.session,
+            )
+        with timing.stage("compose"):
+            composed = compose_wallpaper(
+                cover,
+                title=track.title,
+                artist=track.artist,
+                width=width,
+                height=height,
+            )
         fd, tmp_name = tempfile.mkstemp(suffix=".png", dir=self._composed_cache.cache_dir)
         os.close(fd)
         tmp = Path(tmp_name)
@@ -225,67 +245,17 @@ class NowPlayingRunner:
                 f"Composed wallpaper size {composed.size[0]}x{composed.size[1]} "
                 f"does not match target {width}x{height}",
             )
-        save_wallpaper(composed, tmp)
-        self._maybe_warn_composed_wallpaper_quality(
-            composed,
+        with timing.stage("save"):
+            save_wallpaper(composed, tmp)
+        schedule_compose_quality_verification(
+            composed=composed,
             cover=cover,
             title=track.title,
             artist=track.artist,
             width=width,
             height=height,
         )
-        return self._composed_cache.put(track.track_id, track.art_cache_key, width, height, tmp)
-
-    def _maybe_warn_composed_wallpaper_quality(
-        self,
-        composed: Image.Image,
-        *,
-        cover: Image.Image,
-        title: str,
-        artist: str,
-        width: int,
-        height: int,
-    ) -> None:
-        from now_playing_desktops.composer import plan_wallpaper_layout, render_backdrop
-        from now_playing_desktops.config import strict_compose_verification_enabled
-        from now_playing_desktops.verification.wallpaper_analysis import (
-            assert_glass_panel_present,
-            assert_no_backdrop_band_edges,
-            assert_title_text_present,
-        )
-
-        layout = plan_wallpaper_layout(
-            cover,
-            title=title,
-            artist=artist,
-            width=width,
-            height=height,
-        )
-        backdrop = render_backdrop(cover, width, height)
-        checks: list[tuple[str, Callable[[], None]]] = [
-            (
-                "glass panel",
-                lambda: assert_glass_panel_present(
-                    composed,
-                    layout,
-                    backdrop,
-                    require_uniformity=False,
-                ),
-            ),
-            ("title text", lambda: assert_title_text_present(composed, layout)),
-            (
-                "backdrop bands",
-                lambda: assert_no_backdrop_band_edges(composed, cover, layout=layout),
-            ),
-        ]
-        for label, check in checks:
-            try:
-                check()
-            except AssertionError as exc:
-                message = f"Compose quality check failed ({label}): {exc}"
-                if strict_compose_verification_enabled():
-                    raise
-                logger.warning("%s; applying wallpaper anyway", message)
+        return self._composed_cache.put(track.track_id, material, width, height, tmp)
 
     def _log_render_error_once(self, track_id: str, exc: BaseException) -> None:
         if track_id in self._render_errors_logged:
@@ -360,6 +330,7 @@ class NowPlayingRunner:
         self,
         track: TrackPlayback,
         monitors: list,
+        timing: ApplyTiming,
     ) -> Path:
         from now_playing_desktops.platforms.windows_monitors import compose_canvas_pixel_size
         from now_playing_desktops.platforms.windows_virtual_compose import (
@@ -370,62 +341,68 @@ class NowPlayingRunner:
 
         canvas_w, canvas_h = compose_canvas_pixel_size(monitors)
         signature = self._monitor_layout_signature(monitors)
+        material = track.composed_art_material_key
         cached = self._composed_cache.get(
             track.track_id,
-            track.art_cache_key,
+            material,
             canvas_w,
             canvas_h,
             layout_signature=f"virtual:{signature}",
         )
         if cached:
+            timing.note_cache("hit")
             logger.debug("Virtual desktop cache hit for %s", track.track_id)
             return cached
 
-        cover = load_track_cover(
-            track,
-            download_dir=self._download_dir,
-            session=self.deps.session,
-        )
-        composed = compose_virtual_desktop_wallpaper(
-            cover,
-            title=track.title,
-            artist=track.artist,
-            monitors=monitors,
-        )
+        timing.note_cache("miss")
+        with timing.stage("fetch"):
+            cover = load_track_cover(
+                track,
+                download_dir=self._download_dir,
+                session=self.deps.session,
+            )
+        with timing.stage("compose"):
+            composed = compose_virtual_desktop_wallpaper(
+                cover,
+                title=track.title,
+                artist=track.artist,
+                monitors=monitors,
+            )
         if composed.size != (canvas_w, canvas_h):
             raise ValueError(
                 f"Virtual desktop wallpaper size {composed.size} != {canvas_w}x{canvas_h}",
             )
-        origin_left, origin_top = virtual_desktop_origin(monitors)
-        for monitor in monitors:
-            x0, y0, x1, y1 = monitor_rect_on_canvas(
-                monitor,
-                origin_left=origin_left,
-                origin_top=origin_top,
-            )
-            tile = composed.crop((x0, y0, x1, y1))
-            self._maybe_warn_composed_wallpaper_quality(
-                tile,
-                cover=cover,
-                title=track.title,
-                artist=track.artist,
-                width=monitor.width,
-                height=monitor.height,
-            )
         fd, tmp_name = tempfile.mkstemp(suffix=".png", dir=self._composed_cache.cache_dir)
         os.close(fd)
         tmp = Path(tmp_name)
-        save_wallpaper(composed, tmp)
+        with timing.stage("save"):
+            save_wallpaper(composed, tmp)
+        if monitors:
+            primary = next((m for m in monitors if m.is_primary), monitors[0])
+            origin_left, origin_top = virtual_desktop_origin(monitors)
+            x0, y0, x1, y1 = monitor_rect_on_canvas(
+                primary,
+                origin_left=origin_left,
+                origin_top=origin_top,
+            )
+            schedule_compose_quality_verification(
+                composed=composed.crop((x0, y0, x1, y1)),
+                cover=cover,
+                title=track.title,
+                artist=track.artist,
+                width=primary.width,
+                height=primary.height,
+            )
         return self._composed_cache.put(
             track.track_id,
-            track.art_cache_key,
+            material,
             canvas_w,
             canvas_h,
             tmp,
             layout_signature=f"virtual:{signature}",
         )
 
-    def _apply_wallpaper_for_track(self, track: TrackPlayback) -> None:
+    def _apply_wallpaper_for_track(self, track: TrackPlayback, timing: ApplyTiming) -> None:
         screens = self.deps.platform.list_screens()
         monitors = self._monitors_from_screens(screens) if sys.platform == "win32" else []
         for screen_id, width, height, virtual_span in self._resolve_wallpaper_render_jobs(
@@ -437,47 +414,178 @@ class NowPlayingRunner:
                     f"Invalid wallpaper size {width}x{height} for screen {label}",
                 )
             if virtual_span:
-                composed_path = self._compose_virtual_desktop_path(track, monitors)
-                self.deps.platform.set_wallpaper(
-                    composed_path,
-                    virtual_desktop_span=True,
-                )
+                composed_path = self._compose_virtual_desktop_path(track, monitors, timing)
             else:
-                composed_path = self._compose_path(track, width, height)
-                self.deps.platform.set_wallpaper(composed_path, screen_id=screen_id)
+                composed_path = self._compose_path(track, width, height, timing)
+            with timing.stage("set"):
+                if virtual_span:
+                    self.deps.platform.set_wallpaper(
+                        composed_path,
+                        virtual_desktop_span=True,
+                    )
+                else:
+                    self.deps.platform.set_wallpaper(composed_path, screen_id=screen_id)
+
+    def _handle_idle_playback(self) -> None:
+        self._art_upgrader.cancel_pending()
+        if not self._now_playing_wallpaper_active:
+            return
+        self.restore_original_wallpaper()
+        self._now_playing_wallpaper_active = False
+        self._last_applied_track_id = None
+
+    def _effective_track_for_wallpaper(self, track: TrackPlayback) -> TrackPlayback:
+        upgraded = self._upgraded_art_bytes.get(track.track_id)
+        if upgraded is None:
+            return track
+        return TrackPlayback(
+            track_id=track.track_id,
+            art_url=track.art_url,
+            title=track.title,
+            artist=track.artist,
+            album=track.album,
+            is_playing=track.is_playing,
+            art_bytes=upgraded,
+        )
+
+    @staticmethod
+    def _poll_state_label(track: TrackPlayback | None) -> str:
+        if track is None:
+            return "no session"
+        if not track.is_playing:
+            return f"paused — {track.artist} — {track.title}"
+        return f"playing — {track.artist} — {track.title}"
+
+    def _playback_matches_ticket(self, ticket) -> bool:
+        track = fetch_playback_for_runner(self.deps)
+        if track is None or not track.is_playing:
+            return False
+        return track.track_id == ticket.track_id
+
+    def _apply_upgraded_art(self, track: TrackPlayback, ticket) -> None:
+        with self._upgrade_apply_lock:
+            if not self._playback_matches_ticket(ticket):
+                logger.debug("Skipping iTunes upgrade apply; playback no longer matches")
+                return
+            if track.art_bytes:
+                self._upgraded_art_bytes[track.track_id] = track.art_bytes
+            render_track = self._effective_track_for_wallpaper(track)
+            timing = ApplyTiming()
+            try:
+                self._apply_wallpaper_for_track(render_track, timing)
+            except Exception as exc:
+                self._log_render_error_once(track.track_id, exc)
+                return
+            finally:
+                timing.log_summary(prefix="Upgraded art")
+            self._render_errors_logged.discard(track.track_id)
+            self._last_applied_track_id = track.track_id
+            self._now_playing_wallpaper_active = True
+            self._state.session_active = True
+            self._state.save(self.deps.state_path)
+            logger.info("Updated wallpaper for %s — %s (iTunes art)", track.artist, track.title)
+
+    def _schedule_itunes_upgrade_if_needed(self, track: TrackPlayback) -> None:
+        if not online_art_enabled():
+            return
+        if track.track_id in self._upgrade_attempted_track_ids:
+            return
+        if not self._art_upgrader.should_schedule(track):
+            return
+        self._upgrade_attempted_track_ids.add(track.track_id)
+        self._art_upgrader.schedule(
+            track,
+            download_dir=self._download_dir,
+            session=self.deps.session,
+            on_upgraded=self._apply_upgraded_art,
+            is_still_valid=self._playback_matches_ticket,
+        )
+
+    def _apply_track_wallpaper(self, track: TrackPlayback) -> None:
+        render_track = self._effective_track_for_wallpaper(track)
+        timing = ApplyTiming()
+        try:
+            self._apply_wallpaper_for_track(render_track, timing)
+        except Exception as exc:
+            self._log_render_error_once(track.track_id, exc)
+            return
+        finally:
+            timing.log_summary()
+
+        self._render_errors_logged.discard(track.track_id)
+        self._logged_idle_no_original_restore = False
+        self._last_applied_track_id = track.track_id
+        self._now_playing_wallpaper_active = True
+        self._state.session_active = True
+        self._state.save(self.deps.state_path)
+        logger.info("Updated wallpaper for %s — %s", track.artist, track.title)
+        self._schedule_itunes_upgrade_if_needed(track)
 
     def apply_playback_once(self) -> None:
         track = fetch_playback_for_runner(self.deps)
+        self._last_poll_state = self._poll_state_label(track)
         if track is None or not track.is_playing:
-            self.restore_original_wallpaper()
+            self._handle_idle_playback()
             return
 
         if not self._state.original_wallpaper_path and not self._state.original_wallpaper_snapshot:
             self._ensure_original_saved(activate_session=True)
 
-        key = (track.track_id, track.art_cache_key)
-        if key == self._last_applied:
+        if self._now_playing_wallpaper_active and self._last_applied_track_id == track.track_id:
             logger.debug("Track unchanged; skipping wallpaper update")
             return
 
-        try:
-            self._apply_wallpaper_for_track(track)
-        except Exception as exc:
-            self._log_render_error_once(track.track_id, exc)
-            return
+        if (
+            self._last_applied_track_id is not None
+            and self._last_applied_track_id != track.track_id
+        ):
+            self._art_upgrader.cancel_pending()
 
-        self._render_errors_logged.discard(track.track_id)
-        self._logged_idle_no_original_restore = False
-        self._last_applied = key
-        self._state.session_active = True
-        self._state.save(self.deps.state_path)
-        logger.info("Updated wallpaper for %s — %s", track.artist, track.title)
+        self._apply_track_wallpaper(track)
+
+    def _log_poll_tick(self, *, poll_elapsed: float) -> None:
+        source = getattr(self.deps.playback_provider, "source_name", "unknown")
+        last_ok_age = time.monotonic() - self._last_poll_ok_monotonic
+        logger.debug(
+            "poll tick %s (source=%s, state=%s, last_ok=%.1fs ago, poll_took=%.2fs)",
+            self._poll_tick,
+            source,
+            self._last_poll_state,
+            last_ok_age,
+            poll_elapsed,
+        )
+        if time.monotonic() - self._last_heartbeat_monotonic >= 60.0:
+            logger.info(
+                "Heartbeat: poll tick %s, source=%s, state=%s, last_ok=%.0fs ago",
+                self._poll_tick,
+                source,
+                self._last_poll_state,
+                last_ok_age,
+            )
+            self._last_heartbeat_monotonic = time.monotonic()
+        if poll_elapsed >= 10.0:
+            logger.warning(
+                "Playback poll exceeded 10s wall time (%.2fs); dumping thread stacks",
+                poll_elapsed,
+            )
+            faulthandler.dump_traceback(all_threads=True)
 
     def run_forever(self) -> None:
         self.startup()
+        watchdog = PollStallWatchdog()
+        watchdog.start()
         while True:
+            self._poll_tick += 1
+            poll_started = time.monotonic()
+            watchdog.begin_poll()
             try:
-                self.apply_playback_once()
-            except Exception:  # noqa: BLE001 — keep loop alive
-                logger.exception("Unexpected error in playback loop")
+                try:
+                    self.apply_playback_once()
+                    self._last_poll_ok_monotonic = time.monotonic()
+                except Exception:  # noqa: BLE001 — keep loop alive
+                    logger.exception("Unexpected error in playback loop")
+            finally:
+                watchdog.end_poll()
+            poll_elapsed = time.monotonic() - poll_started
+            self._log_poll_tick(poll_elapsed=poll_elapsed)
             self._sleep(self.deps.poll_interval_seconds)

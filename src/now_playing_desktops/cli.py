@@ -70,6 +70,11 @@ def _shared_verbose_parser() -> argparse.ArgumentParser:
         default=None,
         help="Playback source: spotify Web API, local OS session, or auto (default).",
     )
+    shared.add_argument(
+        "--no-online-art",
+        action="store_true",
+        help="Do not fetch album art over the network (iTunes Search / Spotify art URLs).",
+    )
     return shared
 
 
@@ -230,6 +235,13 @@ def _run_with_lock(args: argparse.Namespace) -> int:
     return 0
 
 
+def _apply_cli_online_art_override(args: argparse.Namespace) -> None:
+    if getattr(args, "no_online_art", False):
+        import os
+
+        os.environ["NOW_PLAYING_ONLINE_ART"] = "0"
+
+
 def _autostart(args: argparse.Namespace) -> int:
     from now_playing_desktops.platforms.autostart import (
         AutostartSetupError,
@@ -247,6 +259,7 @@ def _autostart(args: argparse.Namespace) -> int:
                 env_file=args.env_file,
                 username=args.username,
                 source=getattr(args, "source", None),
+                no_online_art=getattr(args, "no_online_art", False),
             )
         except AutostartSetupError as exc:
             print(exc, file=sys.stderr)
@@ -292,7 +305,14 @@ def _diag(args: argparse.Namespace) -> int:
         print(exc, file=sys.stderr)
         return 1
     username = resolve_spotify_username(getattr(args, "username", None))
-    diag_lines = playback_diag_lines(source_setting=source_setting, username=username)
+    from now_playing_desktops.config import default_cache_dir
+
+    cache_dir = default_cache_dir()
+    diag_lines = playback_diag_lines(
+        source_setting=source_setting,
+        username=username,
+        art_cache_dir=cache_dir / "downloads",
+    )
     report = collect_windows_diag_report()
     print("\n".join([*diag_lines, "", format_windows_diag_report(report)]))
     return 0
@@ -358,6 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     _configure_logging(verbose, command=command)
     env_file = _resolve_env_file_path(getattr(args, "env_file", None))
     load_environment(explicit=env_file, verbose=verbose)
+    _apply_cli_online_art_override(args)
     if args.command in {"run", "restore"}:
         _ensure_runtime_working_directory()
     if args.command == "run":

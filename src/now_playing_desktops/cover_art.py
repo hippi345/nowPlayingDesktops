@@ -9,8 +9,8 @@ from pathlib import Path
 import requests
 from PIL import Image
 
+from now_playing_desktops.art_resolution import resolve_track_art
 from now_playing_desktops.playback_types import TrackPlayback
-from now_playing_desktops.spotify_art import download_album_art
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +45,11 @@ def load_track_cover(
     session: requests.Session | None = None,
 ) -> Image.Image:
     download_dir.mkdir(parents=True, exist_ok=True)
-    if track.art_bytes:
-        with Image.open(io.BytesIO(track.art_bytes)) as image:
-            return prepare_cover_image(image)
-    if not track.art_url:
-        raise ValueError(f"No album art for track {track.track_id}")
-    download_path = download_dir / f"{track.track_id}.jpg"
-    download_album_art(track.art_url, download_path, session=session)
-    with Image.open(download_path) as image:
+    resolved = resolve_track_art(track, download_dir=download_dir, session=session)
+    logger.info(
+        "Track art source: %s (%s)",
+        resolved.source,
+        f"{resolved.width}x{resolved.height}, {resolved.detail}",
+    )
+    with Image.open(io.BytesIO(resolved.image_bytes)) as image:
         return prepare_cover_image(image)

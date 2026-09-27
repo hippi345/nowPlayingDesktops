@@ -17,6 +17,10 @@ class TrackPlayback:
     art_bytes: bytes | None = None
 
     @property
+    def composed_art_material_key(self) -> str:
+        return f"{self.art_cache_key}|{self.title}|{self.artist}"
+
+    @property
     def art_cache_key(self) -> str:
         if self.art_url:
             return self.art_url

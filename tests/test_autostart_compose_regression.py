@@ -76,7 +76,9 @@ def test_compose_from_foreign_cwd_with_env_file_like_autostart(tmp_path: Path, m
             "RGBA"
         ),
     ):
-        composed_path = runner._compose_path(PLAYING, 1664, 1109)
+        from now_playing_desktops.apply_timing import ApplyTiming
+
+        composed_path = runner._compose_path(PLAYING, 1664, 1109, ApplyTiming())
 
     assert composed_path.is_file()
     assert os.getcwd() == str(config_dir)

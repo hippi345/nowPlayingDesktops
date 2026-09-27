@@ -163,6 +163,7 @@ def test_runner_pause_triggers_windows_restore(tmp_path: Path):
         original_wallpaper_snapshot={"backend": "windows", "path": str(original)},
         session_active=True,
     ).save(tmp_path / "state.json")
+    runner._now_playing_wallpaper_active = True
     paused = TrackPlayback("t", "u", "T", "A", is_playing=False)
     with patch(
         "now_playing_desktops.runner.fetch_playback_for_runner",

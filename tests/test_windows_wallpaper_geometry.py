@@ -125,7 +125,9 @@ def test_compose_path_output_matches_requested_monitor_size(tmp_path: Path):
         download_mock.side_effect = lambda track, *, download_dir, session=None: Image.open(
             cover_path
         ).convert("RGBA")
-        out = runner._compose_path(track, 1664, 1109)
+        from now_playing_desktops.apply_timing import ApplyTiming
+
+        out = runner._compose_path(track, 1664, 1109, ApplyTiming())
     with Image.open(out) as image:
         assert image.size == (1664, 1109)
 

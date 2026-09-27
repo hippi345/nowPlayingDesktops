@@ -12,7 +12,7 @@ MIN_POLL_INTERVAL_SECONDS = 2.0
 MAX_POLL_INTERVAL_SECONDS = 3.0
 COMPOSED_CACHE_MAX_ENTRIES = 24
 # Bump when compose layout/visual output changes so stale PNGs are not reused.
-COMPOSED_CACHE_VERSION = "glass-panel-v3"
+COMPOSED_CACHE_VERSION = "glass-panel-v4"
 MAX_COVER_UPSCALE = 1.5
 FOREGROUND_HEIGHT_RATIO = 0.4
 STATE_FILENAME = "wallpaper-state.json"
@@ -24,6 +24,23 @@ def strict_compose_verification_enabled() -> bool:
         "true",
         "yes",
     }
+
+
+def compose_verification_enabled() -> bool:
+    """Optional post-apply quality checks (off by default; never blocks wallpaper set)."""
+    return os.environ.get("NOW_PLAYING_COMPOSE_VERIFY", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def online_art_enabled() -> bool:
+    """Whether album art may be fetched over the network (iTunes Search, Spotify art URLs)."""
+    raw = os.environ.get("NOW_PLAYING_ONLINE_ART", "").strip().lower()
+    if not raw:
+        return True
+    return raw not in {"0", "false", "no", "off"}
 
 
 def user_config_dir() -> Path:

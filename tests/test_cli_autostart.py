@@ -31,7 +31,12 @@ def test_cli_autostart_enable_passes_env_file(tmp_path: Path):
     with patch("now_playing_desktops.platforms.autostart.enable_autostart") as enable:
         code = main(["autostart", "enable", "myuser", "--env-file", str(env_file)])
     assert code == 0
-    enable.assert_called_once_with(env_file=env_file, username="myuser", source=None)
+    enable.assert_called_once_with(
+        env_file=env_file,
+        username="myuser",
+        source=None,
+        no_online_art=False,
+    )
 
 
 def test_cli_autostart_enable_missing_env_reports_message(tmp_path: Path, capsys):

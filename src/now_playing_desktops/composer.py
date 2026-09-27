@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.resources
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +28,8 @@ TEXT_BLOCK_GAP_DIVISOR = 40
 # --- Backdrop ---
 BACKDROP_BLUR_MIN_PX = 36
 BACKDROP_BLUR_SCREEN_DIVISOR = 14
+BACKDROP_BLUR_WORKING_SCALE_DIVISOR = 8
+BACKDROP_BLUR_WORKING_MAX_DIM = 960
 BACKDROP_DARKEN_BLEND = 0.52
 BACKDROP_BRIGHTNESS = 1.0 - BACKDROP_DARKEN_BLEND
 
@@ -73,6 +76,10 @@ GLOW_SCALE_FRAC = 1.12
 GLOW_UPWARD_BIAS_FRAC = 0.06
 
 _FONTS_PACKAGE = "now_playing_desktops.fonts"
+_FONT_CACHE: dict[tuple[int, bool], ImageFont.FreeTypeFont | ImageFont.ImageFont] = {}
+_ROUNDED_MASK_CACHE: dict[tuple[int, int, int], Image.Image] = {}
+_VIGNETTE_MASK_CACHE: dict[tuple[int, int], Image.Image] = {}
+_BACKDROP_CACHE: dict[tuple[str, int, int], Image.Image] = {}
 
 
 @dataclass(frozen=True)
@@ -162,7 +169,13 @@ def _load_package_font(filename: str, size: int) -> ImageFont.FreeTypeFont | Ima
 
 
 def _load_font(size: int, *, bold: bool = True) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    return _load_package_font(TITLE_FONT_FILE if bold else ARTIST_FONT_FILE, size)
+    key = (size, bold)
+    cached = _FONT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    font = _load_package_font(TITLE_FONT_FILE if bold else ARTIST_FONT_FILE, size)
+    _FONT_CACHE[key] = font
+    return font
 
 
 def title_font_size_for_height(height: int) -> int:
@@ -240,20 +253,29 @@ def backdrop_blur_radius(width: int, height: int) -> float:
     return max(BACKDROP_BLUR_MIN_PX, min(width, height) / BACKDROP_BLUR_SCREEN_DIVISOR)
 
 
-def scale_cover_to_fill(cover: Image.Image, width: int, height: int) -> Image.Image:
+def scale_cover_to_fill(
+    cover: Image.Image,
+    width: int,
+    height: int,
+    *,
+    resample: Image.Resampling = Image.Resampling.LANCZOS,
+) -> Image.Image:
     """Scale ``cover`` with cover-fit (max scale) and center-crop to ``width`` x ``height``."""
     if width <= 0 or height <= 0:
         raise ValueError(f"Wallpaper size must be positive, got {width}x{height}")
     scale = max(width / cover.width, height / cover.height)
     new_w = max(1, int(round(cover.width * scale)))
     new_h = max(1, int(round(cover.height * scale)))
-    resized = cover.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    resized = cover.resize((new_w, new_h), resample)
     left = (new_w - width) // 2
     top = (new_h - height) // 2
     return resized.crop((left, top, left + width, top + height))
 
 
 def _vignette_mask(width: int, height: int) -> Image.Image:
+    cached = _VIGNETTE_MASK_CACHE.get((width, height))
+    if cached is not None:
+        return cached
     small_h = max(1, int(VIGNETTE_MASK_SIZE * height / width))
     mask = Image.new("L", (VIGNETTE_MASK_SIZE, small_h))
     cx = VIGNETTE_MASK_SIZE / 2
@@ -266,7 +288,9 @@ def _vignette_mask(width: int, height: int) -> Image.Image:
             r = min(1.0, (nx * nx + ny * ny) ** 0.5)
             strength = r**VIGNETTE_POWER
             pixels[x, y] = max(0, min(255, int(255 * (1 - VIGNETTE_STRENGTH * strength))))
-    return mask.resize((width, height), Image.Resampling.BILINEAR)
+    full = mask.resize((width, height), Image.Resampling.BILINEAR)
+    _VIGNETTE_MASK_CACHE[(width, height)] = full
+    return full
 
 
 def apply_vignette(image: Image.Image) -> Image.Image:
@@ -275,13 +299,67 @@ def apply_vignette(image: Image.Image) -> Image.Image:
     return Image.composite(image, dark, mask)
 
 
+def _backdrop_blur_working_max_dim(width: int, height: int) -> int:
+    max_dim = max(width, height)
+    scaled_cap = max(64, max_dim // BACKDROP_BLUR_WORKING_SCALE_DIVISOR)
+    return min(BACKDROP_BLUR_WORKING_MAX_DIM, scaled_cap)
+
+
+def _gaussian_blur_scaled(
+    image: Image.Image,
+    radius: float,
+    *,
+    working_max_dim: int | None = None,
+) -> Image.Image:
+    width, height = image.size
+    max_dim = max(width, height)
+    cap = working_max_dim if working_max_dim is not None else BACKDROP_BLUR_WORKING_MAX_DIM
+    if max_dim <= cap:
+        return image.filter(ImageFilter.GaussianBlur(radius=radius))
+    scale = cap / max_dim
+    small_w = max(1, int(width * scale))
+    small_h = max(1, int(height * scale))
+    small = image.resize((small_w, small_h), Image.Resampling.BILINEAR)
+    small_radius = max(1.0, radius * scale)
+    blurred = small.filter(ImageFilter.GaussianBlur(radius=small_radius))
+    return blurred.resize((width, height), Image.Resampling.BILINEAR)
+
+
+def _cover_backdrop_digest(cover: Image.Image) -> str:
+    probe = cover
+    if max(cover.size) > 64:
+        probe = cover.resize((64, 64), Image.Resampling.BILINEAR)
+    rgba = probe.convert("RGBA")
+    return hashlib.sha256(rgba.tobytes()).hexdigest()[:24]
+
+
 def render_backdrop(cover: Image.Image, width: int, height: int) -> Image.Image:
     """Blur, darken, and vignette the fill-scaled cover (no foreground)."""
-    backdrop = scale_cover_to_fill(cover.convert("RGB"), width, height)
-    backdrop = backdrop.filter(ImageFilter.GaussianBlur(radius=backdrop_blur_radius(width, height)))
+    cache_key = (_cover_backdrop_digest(cover), width, height)
+    cached = _BACKDROP_CACHE.get(cache_key)
+    if cached is not None:
+        return cached.copy()
+    working_max = _backdrop_blur_working_max_dim(width, height)
+    fill_source = cover if cover.mode == "RGB" else cover.convert("RGB")
+    backdrop = scale_cover_to_fill(
+        fill_source,
+        width,
+        height,
+        resample=Image.Resampling.BILINEAR,
+    )
+    backdrop = _gaussian_blur_scaled(
+        backdrop,
+        backdrop_blur_radius(width, height),
+        working_max_dim=working_max,
+    )
     darken = Image.new("RGB", (width, height), (0, 0, 0))
     backdrop = Image.blend(backdrop, darken, alpha=BACKDROP_DARKEN_BLEND)
-    return apply_vignette(backdrop)
+    backdrop = apply_vignette(backdrop)
+    _BACKDROP_CACHE[cache_key] = backdrop.copy()
+    if len(_BACKDROP_CACHE) > 24:
+        oldest = next(iter(_BACKDROP_CACHE))
+        del _BACKDROP_CACHE[oldest]
+    return backdrop
 
 
 def extract_dominant_glow_color(cover: Image.Image) -> tuple[int, int, int]:
@@ -304,13 +382,21 @@ def extract_dominant_glow_color(cover: Image.Image) -> tuple[int, int, int]:
 
 def mean_luminance(image: Image.Image, box: tuple[int, int, int, int]) -> float:
     crop = image.crop(box)
-    total = 0.0
-    pixels = list(crop.getdata())
-    if not pixels:
+    if crop.width <= 0 or crop.height <= 0:
         return 0.0
+    sample_w = min(48, crop.width)
+    sample_h = min(48, crop.height)
+    if (sample_w, sample_h) != crop.size:
+        crop = crop.resize((sample_w, sample_h), Image.Resampling.BILINEAR)
+    total = 0.0
+    pixels = crop.getdata()
+    count = 0
     for r, g, b in pixels:
         total += 0.2126 * r + 0.7152 * g + 0.0722 * b
-    return total / len(pixels)
+        count += 1
+    if count == 0:
+        return 0.0
+    return total / count
 
 
 def relative_luminance(rgb: tuple[int, int, int]) -> float:
@@ -333,10 +419,15 @@ def contrast_ratio(foreground: tuple[int, int, int], background: tuple[int, int,
 
 
 def _rounded_rectangle_mask(size: tuple[int, int], radius: int) -> Image.Image:
+    key = (size[0], size[1], radius)
+    cached = _ROUNDED_MASK_CACHE.get(key)
+    if cached is not None:
+        return cached
     mask = Image.new("L", size, 0)
     draw = ImageDraw.Draw(mask)
     w, h = size
     draw.rounded_rectangle((0, 0, w - 1, h - 1), radius=radius, fill=255)
+    _ROUNDED_MASK_CACHE[key] = mask
     return mask
 
 
@@ -836,6 +927,6 @@ def _paste_text_layer(
 def save_wallpaper(image: Image.Image, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.suffix.lower() in {".jpg", ".jpeg"}:
-        image.save(path, format="JPEG", quality=95, optimize=True)
+        image.save(path, format="JPEG", quality=95, optimize=False)
     else:
-        image.save(path, format="PNG", optimize=True)
+        image.save(path, format="PNG", compress_level=1, optimize=False)

@@ -34,7 +34,13 @@ def test_windows_autostart_enable_uses_single_run_key(tmp_path):
     env_file.write_text("SPOTIPY_CLIENT_ID=a\nSPOTIPY_CLIENT_SECRET=b\n", encoding="utf-8")
     calls: list[tuple[str, str | None]] = []
 
-    def record_enable(*, env_file: Path, username: str | None, source: str) -> None:
+    def record_enable(
+        *,
+        env_file: Path,
+        username: str | None,
+        source: str,
+        no_online_art: bool = False,
+    ) -> None:
         calls.append((str(env_file), username))
 
     with (

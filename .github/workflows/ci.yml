@@ -70,7 +70,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,windows]"
 
       - name: Ruff
         run: ruff check src tests
@@ -80,6 +80,9 @@ jobs:
 
       - name: Tests
         run: pytest --cov=now_playing_desktops --cov-report=term-missing -q
+
+      - name: Windows winrt optional dependency imports
+        run: pytest tests/test_windows_winrt_deps.py -q
 
       - name: Windows display enumeration smoke test
         run: pytest tests/test_platforms_windows_monitors.py::test_real_monitor_enumeration_and_compose -q
