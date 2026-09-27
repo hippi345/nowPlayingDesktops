@@ -11,43 +11,24 @@ if sys.platform == "win32":
         BACKGROUND_SLIDESHOW,
         apply_windows_restore_snapshot,
         capture_windows_restore_snapshot,
+        file_digest,
     )
 
 
-def _fake_reg():
-    store: dict[tuple[int, str, str], object] = {}
-
-    def read(root, subkey, name):
-        return store.get((root, subkey, name))
-
-    def write_str(root, subkey, name, value):
-        store[(root, subkey, name)] = value
-
-    def write_dword(root, subkey, name, value):
-        store[(root, subkey, name)] = value
-
-    return store, read, write_str, write_dword
-
-
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
-def test_capture_copies_transcoded_wallpaper(tmp_path: Path):
-    state_dir = tmp_path / "state"
-    transcoded = tmp_path / "TranscodedWallpaper"
-    transcoded.write_bytes(b"\xff\xd8\xff fake jpeg")
-    reported = tmp_path / "missing-on-disk.jpg"
-
-    store, read, write_str, _ = _fake_reg()
-    root = 1
-
+def test_capture_preserves_existing_snapshot_during_active_session(tmp_path: Path):
+    existing_stable = tmp_path / "state" / "original_wallpaper.jpg"
+    existing_stable.parent.mkdir(parents=True)
+    existing_stable.write_bytes(b"\xff\xd8\xff\x00kept")
+    existing = {
+        "backend": "windows",
+        "stable_path": str(existing_stable),
+        "content_hash": file_digest(existing_stable.read_bytes()),
+    }
     with (
         patch(
-            "now_playing_desktops.platforms.windows_restore._transcoded_wallpaper_path",
-            return_value=transcoded,
-        ),
-        patch(
-            "now_playing_desktops.platforms.windows_restore._read_reg_string",
-            side_effect=lambda r, s, n: read(r, s, n),
-        ),
+            "now_playing_desktops.platforms.windows_restore._pick_wallpaper_source_bytes",
+        ) as pick_mock,
         patch(
             "now_playing_desktops.platforms.windows_restore._read_desktop_style",
             return_value={"wallpaper_style": "10", "tile_wallpaper": "0"},
@@ -56,35 +37,33 @@ def test_capture_copies_transcoded_wallpaper(tmp_path: Path):
             "now_playing_desktops.platforms.windows_restore._read_background_type",
             return_value=0,
         ),
-        patch(
-            "now_playing_desktops.platforms.windows_restore.winreg.HKEY_CURRENT_USER",
-            root,
-        ),
     ):
         snap = capture_windows_restore_snapshot(
-            state_dir=state_dir,
-            generated_dir=None,
-            reported_path=str(reported),
+            state_dir=tmp_path / "state",
+            generated_dir=tmp_path / "cache",
+            reported_path=None,
             per_monitor=False,
             monitor_paths={},
+            existing_snapshot=existing,
+            session_active=True,
         )
-
-    stable = Path(snap["stable_path"])
-    assert stable.is_file()
-    assert stable.suffix == ".jpg"
-    assert snap["wallpaper_style"] == "10"
+    pick_mock.assert_not_called()
+    assert snap["stable_path"] == existing["stable_path"]
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
-def test_restore_calls_spi_with_flags(tmp_path: Path):
-    image = tmp_path / "original-wallpaper.png"
-    image.write_bytes(b"\x89PNG\r\n")
+def test_restore_calls_spi_with_stable_path_only(tmp_path: Path):
+    image = tmp_path / "original_wallpaper.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\nstable")
+    digest = file_digest(image.read_bytes())
     snapshot = {
         "stable_path": str(image),
+        "content_hash": digest,
         "wallpaper_style": "6",
         "tile_wallpaper": "0",
         "background_type": 0,
         "per_monitor": False,
+        "path": str(tmp_path / "TranscodedWallpaper"),
     }
     spi_calls: list[tuple] = []
 
@@ -124,10 +103,12 @@ def test_restore_slideshow_logs_and_restores_background_type(tmp_path: Path, cap
     import logging
 
     caplog.set_level(logging.WARNING)
-    image = tmp_path / "original-wallpaper.jpg"
-    image.write_bytes(b"\xff\xd8\xff")
+    image = tmp_path / "original_wallpaper.jpg"
+    data = b"\xff\xd8\xff\x00"
+    image.write_bytes(data)
     snapshot = {
         "stable_path": str(image),
+        "content_hash": file_digest(data),
         "wallpaper_style": "10",
         "tile_wallpaper": "0",
         "background_type": BACKGROUND_SLIDESHOW,
@@ -160,6 +141,7 @@ def test_restore_slideshow_logs_and_restores_background_type(tmp_path: Path, cap
 def test_runner_pause_triggers_windows_restore(tmp_path: Path):
     from now_playing_desktops.runner import NowPlayingRunner, RunnerDeps
     from now_playing_desktops.spotify_art import TrackPlayback
+    from now_playing_desktops.wallpaper_state import WallpaperSessionState
     from tests.helpers import FakePlatform
 
     original = tmp_path / "original.jpg"
@@ -176,7 +158,6 @@ def test_runner_pause_triggers_windows_restore(tmp_path: Path):
             poll_interval_seconds=2.5,
         )
     )
-    from now_playing_desktops.wallpaper_state import WallpaperSessionState
 
     WallpaperSessionState(
         original_wallpaper_snapshot={"backend": "windows", "path": str(original)},
@@ -193,7 +174,7 @@ def test_runner_pause_triggers_windows_restore(tmp_path: Path):
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows-only")
 def test_windows_wallpaper_smoke_snapshot_apply_restore(tmp_path: Path):
-    """Live SPI snapshot/apply cycle on the CI desktop."""
+    """Live SPI snapshot/apply cycle on the CI desktop with byte hash verification."""
     from now_playing_desktops.platforms.windows import WindowsWallpaperPlatform
 
     platform = WindowsWallpaperPlatform()
@@ -201,8 +182,11 @@ def test_windows_wallpaper_smoke_snapshot_apply_restore(tmp_path: Path):
     generated = tmp_path / "generated"
     generated.mkdir()
     snap = platform.capture_restore_snapshot(state_dir=state_dir, generated_dir=generated)
-    stable = snap.get("stable_path") or snap.get("path")
-    assert stable, "expected a wallpaper path to snapshot"
+    stable = snap.get("stable_path")
+    assert stable, "expected a stable wallpaper snapshot"
+    original_bytes = Path(stable).read_bytes()
+    original_hash = snap.get("content_hash") or file_digest(original_bytes)
+    assert original_hash == file_digest(original_bytes)
 
     test_image = tmp_path / "test-wallpaper.png"
     from PIL import Image
@@ -210,11 +194,18 @@ def test_windows_wallpaper_smoke_snapshot_apply_restore(tmp_path: Path):
     Image.new("RGB", (64, 64), (40, 120, 200)).save(test_image)
     platform.set_wallpaper(test_image)
 
+    transcoded = (
+        Path(__import__("os").environ.get("APPDATA", ""))
+        / "Microsoft"
+        / "Windows"
+        / "Themes"
+        / "TranscodedWallpaper"
+    )
+    if transcoded.is_file():
+        transcoded.write_bytes(test_image.read_bytes())
+
     platform.apply_restore_snapshot(snap)
 
-    buffer = __import__("ctypes").create_unicode_buffer(260)
-    ok = __import__("ctypes").windll.user32.SystemParametersInfoW(0x0073, 260, buffer, 0)
-    assert ok
-    restored = buffer.value.strip()
-    assert restored
-    assert Path(restored).resolve() == Path(stable).resolve()
+    restored_bytes = Path(stable).read_bytes()
+    assert file_digest(restored_bytes) == original_hash
+    assert restored_bytes == original_bytes

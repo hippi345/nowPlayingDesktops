@@ -107,6 +107,9 @@ class WindowsWallpaperPlatform:
         *,
         state_dir: Path | None = None,
         generated_dir: Path | None = None,
+        existing_snapshot: dict[str, Any] | None = None,
+        session_active: bool = False,
+        recovering: bool = False,
     ) -> dict[str, Any]:
         from now_playing_desktops.config import user_config_dir
         from now_playing_desktops.platforms.windows_restore import capture_windows_restore_snapshot
@@ -125,6 +128,9 @@ class WindowsWallpaperPlatform:
             reported_path=str(primary) if primary else None,
             per_monitor=self._per_monitor,
             monitor_paths=monitors,
+            existing_snapshot=existing_snapshot,
+            session_active=session_active,
+            recovering=recovering,
         )
 
     def apply_restore_snapshot(self, snapshot: dict[str, Any]) -> None:

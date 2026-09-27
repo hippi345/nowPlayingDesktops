@@ -45,6 +45,9 @@ class WallpaperPlatform(Protocol):
         *,
         state_dir: Path | None = None,
         generated_dir: Path | None = None,
+        existing_snapshot: dict[str, Any] | None = None,
+        session_active: bool = False,
+        recovering: bool = False,
     ) -> dict[str, Any]:
         """Serialize current wallpaper settings for later restore."""
         ...

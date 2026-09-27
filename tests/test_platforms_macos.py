@@ -44,7 +44,7 @@ def test_macos_capture_restore_per_screen(tmp_path: Path):
             side_effect=lambda *, screen_id=None: a if screen_id == "1" else b,
         ),
     ):
-        snap = platform.capture_restore_snapshot()
+        snap = platform.capture_restore_snapshot(state_dir=tmp_path / "state")
     assert snap["screens"]["1"] == str(a)
     assert snap["screens"]["2"] == str(b)
 

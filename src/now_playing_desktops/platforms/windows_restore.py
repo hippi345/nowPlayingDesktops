@@ -5,11 +5,21 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
-import shutil
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from now_playing_desktops.wallpaper_snapshot import (
+    STABLE_WALLPAPER_BASENAME,
+    attach_stable_copy_to_snapshot,
+    bytes_match_render,
+    collect_render_content_hashes,
+    copy_file_to_stable_wallpaper,
+    file_digest,
+    path_is_generated_render,
+    should_preserve_existing_snapshot,
+)
 from now_playing_desktops.wallpaper_state import path_is_under_directory
 
 if sys.platform == "win32":
@@ -28,13 +38,12 @@ _MAX_WALLPAPER_CHARS = 260
 DESKTOP_KEY = r"Control Panel\Desktop"
 COLORS_KEY = r"Control Panel\Colors"
 WALLPAPERS_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers"
+IE_DESKTOP_KEY = r"Software\Microsoft\Internet Explorer\Desktop\General"
 
 BACKGROUND_PICTURE = 0
 BACKGROUND_SOLID = 1
 BACKGROUND_SLIDESHOW = 2
 BACKGROUND_SPOTLIGHT = 3
-
-STABLE_WALLPAPER_BASENAME = "original-wallpaper"
 
 
 def _read_reg_string(root: int, subkey: str, name: str) -> str | None:
@@ -68,64 +77,86 @@ def _get_last_error() -> int:
     return int(ctypes.windll.kernel32.GetLastError())
 
 
-def _spi_get_wallpaper_path() -> str | None:
-    buffer = ctypes.create_unicode_buffer(_MAX_WALLPAPER_CHARS)
-    if not ctypes.windll.user32.SystemParametersInfoW(
-        SPI_GETDESKWALLPAPER,
-        len(buffer),
-        buffer,
-        0,
-    ):
-        logger.debug("SPI_GETDESKWALLPAPER failed (GetLastError=%s)", _get_last_error())
-        return _read_reg_string(winreg.HKEY_CURRENT_USER, DESKTOP_KEY, "Wallpaper")
-    path = buffer.value.strip()
-    if not path:
-        return _read_reg_string(winreg.HKEY_CURRENT_USER, DESKTOP_KEY, "Wallpaper")
-    return path
-
-
 def _transcoded_wallpaper_path() -> Path:
     appdata = os.environ.get("APPDATA", "")
     return Path(appdata) / "Microsoft" / "Windows" / "Themes" / "TranscodedWallpaper"
 
 
-def _guess_image_extension(source: Path) -> str:
-    if source.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp"}:
-        return source.suffix.lower()
-    try:
-        from PIL import Image
-
-        with Image.open(source) as image:
-            fmt = (image.format or "JPEG").upper()
-    except OSError:
-        return ".jpg"
-    if fmt == "PNG":
-        return ".png"
-    if fmt in {"JPEG", "JPG"}:
-        return ".jpg"
-    return ".jpg"
+def _cached_files_wallpaper_path() -> Path | None:
+    appdata = os.environ.get("APPDATA", "")
+    cached_dir = Path(appdata) / "Microsoft" / "Windows" / "Themes" / "CachedFiles"
+    if not cached_dir.is_dir():
+        return None
+    candidates = [p for p in cached_dir.iterdir() if p.is_file()]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
-def _resolve_copy_source(reported_path: Path | None) -> Path | None:
-    transcoded = _transcoded_wallpaper_path()
-    if transcoded.is_file():
-        return transcoded
-    if reported_path is not None and reported_path.is_file():
-        return reported_path
-    if reported_path is not None:
-        expanded = Path(os.path.expandvars(str(reported_path)))
-        if expanded.is_file():
-            return expanded
+def _wallpaper_source_from_registry() -> Path | None:
+    if winreg is None:
+        return None
+    raw = _read_reg_string(winreg.HKEY_CURRENT_USER, IE_DESKTOP_KEY, "WallpaperSource")
+    if not raw:
+        return None
+    expanded = Path(os.path.expandvars(raw))
+    if expanded.is_file():
+        return expanded
     return None
 
 
-def _copy_to_stable_path(source: Path, state_dir: Path) -> Path:
-    state_dir.mkdir(parents=True, exist_ok=True)
-    ext = _guess_image_extension(source)
-    dest = state_dir / f"{STABLE_WALLPAPER_BASENAME}{ext}"
-    shutil.copy2(source, dest)
-    logger.info("Copied wallpaper snapshot to stable path: %s (from %s)", dest, source)
-    return dest
+def iter_windows_wallpaper_source_candidates(
+    reported_path: Path | None,
+) -> Iterator[Path]:
+    """Yield wallpaper file candidates in Windows source priority order."""
+    registry_source = _wallpaper_source_from_registry()
+    if registry_source is not None:
+        yield registry_source
+    cached = _cached_files_wallpaper_path()
+    if cached is not None:
+        yield cached
+    yield _transcoded_wallpaper_path()
+    if reported_path is not None:
+        if reported_path.is_file():
+            yield reported_path
+        else:
+            expanded = Path(os.path.expandvars(str(reported_path)))
+            if expanded.is_file():
+                yield expanded
+
+
+def _pick_wallpaper_source_bytes(
+    *,
+    state_dir: Path,
+    generated_dir: Path | None,
+    reported_path: Path | None,
+    render_digests: set[str],
+) -> tuple[Path | None, bytes | None]:
+    seen: set[str] = set()
+    for candidate in iter_windows_wallpaper_source_candidates(reported_path):
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not candidate.is_file():
+            continue
+        if path_is_generated_render(
+            candidate,
+            generated_dir=generated_dir,
+            state_dir=state_dir,
+        ):
+            logger.debug("Skipping generated render wallpaper source: %s", candidate)
+            continue
+        try:
+            data = candidate.read_bytes()
+        except OSError:
+            continue
+        if bytes_match_render(data, render_digests):
+            logger.debug("Skipping render digest wallpaper source: %s", candidate)
+            continue
+        logger.info("Selected Windows wallpaper snapshot source: %s", candidate)
+        return candidate, data
+    return None, None
 
 
 def _read_desktop_style() -> dict[str, str]:
@@ -162,11 +193,28 @@ def capture_windows_restore_snapshot(
     reported_path: str | None,
     per_monitor: bool,
     monitor_paths: dict[str, str],
+    existing_snapshot: dict[str, Any] | None = None,
+    session_active: bool = False,
+    recovering: bool = False,
 ) -> dict[str, Any]:
     """Build a restore snapshot with a stable on-disk wallpaper copy."""
+    if should_preserve_existing_snapshot(
+        existing_snapshot,
+        session_active=session_active,
+        recovering=recovering,
+    ):
+        logger.info(
+            "Preserving existing wallpaper snapshot: %s",
+            existing_snapshot.get("stable_path"),
+        )
+        preserved = dict(existing_snapshot or {})
+        preserved.setdefault("backend", "windows")
+        return preserved
+
     style = _read_desktop_style()
     background_type = _read_background_type()
     solid_color = _read_solid_color() if background_type == BACKGROUND_SOLID else None
+    render_digests = collect_render_content_hashes(generated_dir)
 
     primary_reported = Path(reported_path) if reported_path else None
     if (
@@ -174,22 +222,13 @@ def capture_windows_restore_snapshot(
         and generated_dir
         and path_is_under_directory(primary_reported, generated_dir)
     ):
-        logger.debug("Skipping capture of generated wallpaper as original: %s", primary_reported)
         primary_reported = None
-
-    stable_path: str | None = None
-    source = _resolve_copy_source(primary_reported)
-    if source is not None:
-        if generated_dir and path_is_under_directory(source, generated_dir):
-            logger.debug("Skipping copy of generated wallpaper source: %s", source)
-        else:
-            stable = _copy_to_stable_path(source, state_dir)
-            stable_path = str(stable.resolve())
 
     snapshot: dict[str, Any] = {
         "backend": "windows",
-        "path": stable_path or reported_path,
-        "stable_path": stable_path,
+        "path": None,
+        "stable_path": None,
+        "content_hash": None,
         "wallpaper_style": style["wallpaper_style"],
         "tile_wallpaper": style["tile_wallpaper"],
         "background_type": background_type,
@@ -198,33 +237,60 @@ def capture_windows_restore_snapshot(
         "monitors": {},
     }
 
+    if background_type != BACKGROUND_SOLID:
+        source_path, source_bytes = _pick_wallpaper_source_bytes(
+            state_dir=state_dir,
+            generated_dir=generated_dir,
+            reported_path=primary_reported,
+            render_digests=render_digests,
+        )
+        snapshot = attach_stable_copy_to_snapshot(
+            snapshot,
+            state_dir=state_dir,
+            source_path=source_path,
+            source_bytes=source_bytes,
+            generated_dir=generated_dir,
+            render_digests=render_digests,
+        )
+
     if per_monitor and monitor_paths:
         monitors_stable: dict[str, str] = {}
         for monitor_id, raw in monitor_paths.items():
             mon_path = Path(raw)
             if generated_dir and path_is_under_directory(mon_path, generated_dir):
                 continue
-            mon_source = _resolve_copy_source(mon_path)
-            if mon_source is None:
-                monitors_stable[monitor_id] = raw
+            if path_is_generated_render(
+                mon_path,
+                generated_dir=generated_dir,
+                state_dir=state_dir,
+            ):
                 continue
-            ext = _guess_image_extension(mon_source)
-            dest = state_dir / f"{STABLE_WALLPAPER_BASENAME}-{monitor_id}{ext}"
-            shutil.copy2(mon_source, dest)
+            if not mon_path.is_file():
+                continue
+            try:
+                data = mon_path.read_bytes()
+            except OSError:
+                continue
+            if bytes_match_render(data, render_digests):
+                continue
+            dest, digest = copy_file_to_stable_wallpaper(
+                mon_path,
+                state_dir,
+                basename=f"{STABLE_WALLPAPER_BASENAME}-{monitor_id}",
+            )
             monitors_stable[monitor_id] = str(dest.resolve())
             logger.info(
-                "Copied monitor %s wallpaper snapshot to %s",
+                "Copied monitor %s wallpaper snapshot to %s (digest=%s)",
                 monitor_id,
                 dest,
+                digest,
             )
         snapshot["monitors"] = monitors_stable
 
     logger.debug(
-        "Windows restore snapshot: stable_path=%s style=%s tile=%s background_type=%s",
-        stable_path,
-        style["wallpaper_style"],
-        style["tile_wallpaper"],
-        background_type,
+        "Windows restore snapshot: stable_path=%s content_hash=%s",
+        snapshot.get("stable_path"),
+        snapshot.get("content_hash"),
     )
     return snapshot
 
@@ -291,9 +357,9 @@ def apply_windows_restore_snapshot(
         _restore_solid_color(str(solid_color))
         return
 
-    restore_path = snapshot.get("stable_path") or snapshot.get("path")
+    restore_path = snapshot.get("stable_path")
     if not restore_path:
-        logger.warning("Windows restore snapshot has no wallpaper path")
+        logger.warning("Windows restore snapshot has no stable_path; refusing to restore")
         return
     path = Path(str(restore_path))
     if not path.is_file():
@@ -301,6 +367,15 @@ def apply_windows_restore_snapshot(
         return
 
     path_str = str(path.resolve())
+    expected_hash = snapshot.get("content_hash")
+    if expected_hash:
+        actual = file_digest(path.read_bytes())
+        if actual != expected_hash:
+            logger.warning(
+                "Stable wallpaper digest mismatch before restore (expected %s, got %s)",
+                expected_hash,
+                actual,
+            )
 
     if snapshot.get("per_monitor") and snapshot.get("monitors"):
         for monitor_id, raw in snapshot["monitors"].items():
@@ -329,3 +404,11 @@ def apply_windows_restore_snapshot(
             background_type,
         )
         _notify_background_type_restored(background_type)
+
+
+def read_stable_wallpaper_bytes(snapshot: dict[str, Any]) -> bytes:
+    """Return bytes from the snapshot stable copy (for tests and verification)."""
+    stable = snapshot.get("stable_path")
+    if not stable:
+        raise ValueError("snapshot has no stable_path")
+    return Path(str(stable)).read_bytes()

@@ -109,10 +109,14 @@ class FakePlatform:
         *,
         state_dir: Path | None = None,
         generated_dir: Path | None = None,
+        existing_snapshot: dict | None = None,
+        session_active: bool = False,
+        recovering: bool = False,
     ) -> dict:
         return {
             "backend": "fake",
             "path": str(self.wallpaper) if self.wallpaper else None,
+            "stable_path": str(self.wallpaper) if self.wallpaper else None,
         }
 
     def apply_restore_snapshot(self, snapshot: dict) -> None:
