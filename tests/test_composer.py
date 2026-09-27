@@ -176,10 +176,6 @@ def test_cover_rim_highlight_brighter_than_adjacent_backdrop():
         height=1080,
     )
     placement = compute_cover_placement(cover, 1920, 1080)
-    rim_lum = mean_luminance(
-        composed,
-        (placement.x + 6, placement.y + 6, placement.x + 18, placement.y + 18),
-    )
     rim_box = composed.crop(
         (placement.x + 4, placement.y + 4, placement.x + 22, placement.y + 22),
     )
