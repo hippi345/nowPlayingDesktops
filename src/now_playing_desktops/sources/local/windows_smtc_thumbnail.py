@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from now_playing_desktops.sources.local.windows_smtc_winrt import WinrtTimeoutError, winrt_wait
+
 logger = logging.getLogger(__name__)
 
 _THUMBNAIL_RETRY_ATTEMPTS = 5
@@ -18,8 +20,27 @@ async def read_random_access_stream_bytes(stream) -> bytes | None:
     if size <= 0:
         return None
     buffer = Buffer(size)
-    await stream.read_async(buffer, size, InputStreamOptions.READ_AHEAD)
+    await winrt_wait(
+        stream.read_async(buffer, size, InputStreamOptions.READ_AHEAD),
+        operation="IRandomAccessStream.read_async",
+    )
     return bytes(buffer)
+
+
+async def read_thumbnail_reference_bytes_once(thumbnail_ref) -> bytes | None:
+    if thumbnail_ref is None:
+        return None
+    try:
+        stream = await winrt_wait(
+            thumbnail_ref.open_read_async(),
+            operation="IRandomAccessStreamReference.open_read_async",
+        )
+        return await read_random_access_stream_bytes(stream)
+    except WinrtTimeoutError:
+        return None
+    except Exception:
+        logger.warning("SMTC thumbnail read failed", exc_info=True)
+        return None
 
 
 async def read_thumbnail_reference_bytes(
@@ -33,8 +54,7 @@ async def read_thumbnail_reference_bytes(
     last_error: BaseException | None = None
     for attempt in range(attempts):
         try:
-            stream = await thumbnail_ref.open_read_async()
-            art_bytes = await read_random_access_stream_bytes(stream)
+            art_bytes = await read_thumbnail_reference_bytes_once(thumbnail_ref)
             if art_bytes:
                 return art_bytes
             if attempt < attempts - 1:

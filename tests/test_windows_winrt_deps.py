@@ -48,3 +48,14 @@ def test_read_bytes_from_in_memory_random_access_stream():
         assert thumb == payload
 
     asyncio.run(_run())
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only COM + SMTC apartment test")
+def test_smtc_manager_request_after_sta_com_init():
+    from now_playing_desktops.sources.local.windows_smtc_worker import (
+        read_spotify_session_after_sta_com_probe,
+        reset_smtc_worker,
+    )
+
+    reset_smtc_worker()
+    read_spotify_session_after_sta_com_probe(timeout=5.0)

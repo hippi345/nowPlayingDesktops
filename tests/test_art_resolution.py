@@ -172,8 +172,17 @@ def test_read_random_access_stream_bytes_reads_buffer(monkeypatch):
             buffer._data[:count] = b"abc"[:count]
             return count
 
+    async def passthrough(awaitable, **_kwargs):
+        return await awaitable
+
     async def _run():
-        with patch("winrt.windows.storage.streams.Buffer", FakeBuffer):
+        with (
+            patch("winrt.windows.storage.streams.Buffer", FakeBuffer),
+            patch(
+                "now_playing_desktops.sources.local.windows_smtc_thumbnail.winrt_wait",
+                passthrough,
+            ),
+        ):
             data = await read_random_access_stream_bytes(FakeStream())
         assert data == b"abc"
 

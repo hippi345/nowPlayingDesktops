@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import atexit
+import faulthandler
 import logging
 import os
 import signal
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +22,7 @@ from now_playing_desktops.composer import compose_wallpaper, save_wallpaper
 from now_playing_desktops.cover_art import load_track_cover
 from now_playing_desktops.platforms.base import WallpaperPlatform
 from now_playing_desktops.playback_types import TrackPlayback
+from now_playing_desktops.poll_watchdog import PollStallWatchdog
 from now_playing_desktops.sources.base import PlaybackProvider
 from now_playing_desktops.wallpaper_state import (
     WallpaperSessionState,
@@ -65,6 +68,10 @@ class NowPlayingRunner:
         self._restore_registered = False
         self._render_errors_logged: set[str] = set()
         self._logged_idle_no_original_restore = False
+        self._poll_tick = 0
+        self._last_poll_ok_monotonic = time.monotonic()
+        self._last_heartbeat_monotonic = time.monotonic()
+        self._last_poll_state = "unknown"
 
     def _sleep(self, seconds: float) -> None:
         self.deps.sleep(seconds)
@@ -451,8 +458,17 @@ class NowPlayingRunner:
         self.restore_original_wallpaper()
         self._now_playing_wallpaper_active = False
 
+    @staticmethod
+    def _poll_state_label(track: TrackPlayback | None) -> str:
+        if track is None:
+            return "no session"
+        if not track.is_playing:
+            return f"paused — {track.artist} — {track.title}"
+        return f"playing — {track.artist} — {track.title}"
+
     def apply_playback_once(self) -> None:
         track = fetch_playback_for_runner(self.deps)
+        self._last_poll_state = self._poll_state_label(track)
         if track is None or not track.is_playing:
             self._handle_idle_playback()
             return
@@ -479,11 +495,49 @@ class NowPlayingRunner:
         self._state.save(self.deps.state_path)
         logger.info("Updated wallpaper for %s — %s", track.artist, track.title)
 
+    def _log_poll_tick(self, *, poll_elapsed: float) -> None:
+        source = getattr(self.deps.playback_provider, "source_name", "unknown")
+        last_ok_age = time.monotonic() - self._last_poll_ok_monotonic
+        logger.debug(
+            "poll tick %s (source=%s, state=%s, last_ok=%.1fs ago, poll_took=%.2fs)",
+            self._poll_tick,
+            source,
+            self._last_poll_state,
+            last_ok_age,
+            poll_elapsed,
+        )
+        if time.monotonic() - self._last_heartbeat_monotonic >= 60.0:
+            logger.info(
+                "Heartbeat: poll tick %s, source=%s, state=%s, last_ok=%.0fs ago",
+                self._poll_tick,
+                source,
+                self._last_poll_state,
+                last_ok_age,
+            )
+            self._last_heartbeat_monotonic = time.monotonic()
+        if poll_elapsed >= 10.0:
+            logger.warning(
+                "Playback poll exceeded 10s wall time (%.2fs); dumping thread stacks",
+                poll_elapsed,
+            )
+            faulthandler.dump_traceback(all_threads=True)
+
     def run_forever(self) -> None:
         self.startup()
+        watchdog = PollStallWatchdog()
+        watchdog.start()
         while True:
+            self._poll_tick += 1
+            poll_started = time.monotonic()
+            watchdog.begin_poll()
             try:
-                self.apply_playback_once()
-            except Exception:  # noqa: BLE001 — keep loop alive
-                logger.exception("Unexpected error in playback loop")
+                try:
+                    self.apply_playback_once()
+                    self._last_poll_ok_monotonic = time.monotonic()
+                except Exception:  # noqa: BLE001 — keep loop alive
+                    logger.exception("Unexpected error in playback loop")
+            finally:
+                watchdog.end_poll()
+            poll_elapsed = time.monotonic() - poll_started
+            self._log_poll_tick(poll_elapsed=poll_elapsed)
             self._sleep(self.deps.poll_interval_seconds)
