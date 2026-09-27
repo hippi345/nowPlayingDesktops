@@ -51,6 +51,7 @@ class MonitorInfo:
     is_primary: bool
     left: int = 0
     top: int = 0
+    device_name: str = ""
 
 
 def monitor_size_from_rect(left: int, top: int, right: int, bottom: int) -> tuple[int, int]:
@@ -212,6 +213,7 @@ def monitor_info_from_win32(
         is_primary=is_primary,
         left=rect.left,
         top=rect.top,
+        device_name=device_name or "",
     )
 
 
@@ -238,15 +240,18 @@ def enumerate_monitors() -> list[MonitorInfo]:
         if not user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
             return True
         device = str(info.szDevice.value)
-        collected.append(
-            monitor_info_from_win32(
-                int(hmonitor),
-                info,
-                fallback_width=fallback_w,
-                fallback_height=fallback_h,
-                device_name=device,
-            )
+        monitor = monitor_info_from_win32(
+            int(hmonitor),
+            info,
+            fallback_width=fallback_w,
+            fallback_height=fallback_h,
+            device_name=device,
         )
+        collected.append(monitor)
+        if sys.platform == "win32":
+            from now_playing_desktops.platforms import windows_com
+
+            windows_com.register_monitor_device(monitor.monitor_id, device)
         return True
 
     user32.EnumDisplayMonitors(0, 0, callback, 0)
@@ -268,6 +273,7 @@ def enumerate_monitors() -> list[MonitorInfo]:
             is_primary=True,
             left=first.left,
             top=first.top,
+            device_name=first.device_name,
         )
     return collected
 

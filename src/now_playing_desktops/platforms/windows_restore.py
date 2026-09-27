@@ -38,6 +38,7 @@ _MAX_WALLPAPER_CHARS = 260
 DESKTOP_KEY = r"Control Panel\Desktop"
 WALLPAPER_STYLE_FILL = "10"
 WALLPAPER_STYLE_CENTER = "0"
+WALLPAPER_STYLE_SPAN = "22"
 TILE_WALLPAPER_OFF = "0"
 COLORS_KEY = r"Control Panel\Colors"
 WALLPAPERS_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers"
@@ -170,6 +171,11 @@ def apply_windows_fill_wallpaper_style() -> None:
 def apply_windows_center_wallpaper_style() -> None:
     """Use centered 1:1 placement when the bitmap matches the monitor pixel size."""
     _apply_wallpaper_style(WALLPAPER_STYLE_CENTER)
+
+
+def apply_windows_span_wallpaper_style() -> None:
+    """Use Span for a single bitmap covering the virtual desktop (multi-monitor SPI)."""
+    _apply_wallpaper_style(WALLPAPER_STYLE_SPAN)
 
 
 def apply_windows_wallpaper_style_for_image(

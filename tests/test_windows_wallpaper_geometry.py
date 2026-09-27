@@ -109,7 +109,7 @@ def test_runner_render_jobs_match_primary_monitor_size(tmp_path: Path):
     )
     runner = make_runner(tmp_path, platform=platform)
     jobs = runner._resolve_wallpaper_render_jobs(platform.list_screens())
-    assert jobs == [(None, 1664, 1109)]
+    assert jobs == [(None, 1664, 1109, False)]
 
 
 def test_compose_path_output_matches_requested_monitor_size(tmp_path: Path):

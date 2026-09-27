@@ -82,7 +82,13 @@ class FakePlatform:
         self.screen = screen
         self.set_calls: list[Path] = []
 
-    def set_wallpaper(self, path: Path, *, screen_id: str | None = None) -> None:
+    def set_wallpaper(
+        self,
+        path: Path,
+        *,
+        screen_id: str | None = None,
+        virtual_desktop_span: bool = False,
+    ) -> None:
         self.set_calls.append(path)
         self.wallpaper = path
 

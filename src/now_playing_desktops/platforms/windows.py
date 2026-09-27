@@ -38,10 +38,17 @@ class WindowsWallpaperPlatform:
 
         self._per_monitor = sys.platform == "win32" and idesktop_wallpaper_available()
 
-    def set_wallpaper(self, image_path: Path, *, screen_id: str | None = None) -> None:
+    def set_wallpaper(
+        self,
+        image_path: Path,
+        *,
+        screen_id: str | None = None,
+        virtual_desktop_span: bool = False,
+    ) -> None:
         from PIL import Image
 
         from now_playing_desktops.platforms.windows_restore import (
+            apply_windows_span_wallpaper_style,
             apply_windows_wallpaper_style_for_image,
         )
 
@@ -49,12 +56,22 @@ class WindowsWallpaperPlatform:
         monitor_w, monitor_h = self._monitor_pixel_size_for_screen(screen_id)
         with Image.open(image_path) as image:
             image_w, image_h = image.size
-        apply_windows_wallpaper_style_for_image(
-            image_width=image_w,
-            image_height=image_h,
-            monitor_width=monitor_w,
-            monitor_height=monitor_h,
-        )
+        if virtual_desktop_span:
+            apply_windows_span_wallpaper_style()
+        elif screen_id is not None and self._per_monitor:
+            apply_windows_wallpaper_style_for_image(
+                image_width=image_w,
+                image_height=image_h,
+                monitor_width=monitor_w,
+                monitor_height=monitor_h,
+            )
+        else:
+            apply_windows_wallpaper_style_for_image(
+                image_width=image_w,
+                image_height=image_h,
+                monitor_width=monitor_w,
+                monitor_height=monitor_h,
+            )
         if screen_id is not None and self._per_monitor:
             _set_wallpaper_on_monitor(path_str, screen_id)
             return
@@ -122,6 +139,7 @@ class WindowsWallpaperPlatform:
                 is_primary=m.is_primary,
                 left=m.left,
                 top=m.top,
+                device_name=m.device_name,
             )
             for m in enumerate_monitors()
         ]
