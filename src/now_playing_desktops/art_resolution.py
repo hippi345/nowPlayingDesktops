@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 ITUNES_SEARCH_URL = "https://itunes.apple.com/search"
 ITUNES_TIMEOUT_SECONDS = 5.0
+ITUNES_BLOCKING_TIMEOUT_SECONDS = 2.5
 PLACEHOLDER_SIZE = 1000
 ITUNES_UPGRADE_OVER_SMTC_MIN_PX = 600
 
@@ -28,6 +29,16 @@ class ResolvedArt:
     source: str
     width: int
     height: int
+    detail: str
+
+
+@dataclass(frozen=True)
+class ItunesUpgradeResult:
+    image_bytes: bytes
+    width: int
+    height: int
+    smtc_width: int
+    smtc_height: int
     detail: str
 
 
@@ -174,6 +185,7 @@ def _download_itunes_art(
     *,
     download_dir: Path,
     session: requests.Session,
+    timeout_seconds: float = ITUNES_TIMEOUT_SECONDS,
 ) -> ResolvedArt | None:
     itunes_url = lookup_itunes_artwork_url(
         track.artist,
@@ -184,7 +196,7 @@ def _download_itunes_art(
     if not itunes_url:
         return None
     try:
-        response = session.get(itunes_url, timeout=ITUNES_TIMEOUT_SECONDS)
+        response = session.get(itunes_url, timeout=timeout_seconds)
         response.raise_for_status()
         data = response.content
         with Image.open(io.BytesIO(data)) as image:
@@ -206,6 +218,40 @@ def _download_itunes_art(
         return None
 
 
+def try_fetch_itunes_upgrade(
+    track,
+    *,
+    smtc_max_dim: int,
+    download_dir: Path,
+    session: requests.Session | None = None,
+) -> ItunesUpgradeResult | None:
+    """Return iTunes bytes only when strictly larger than the current SMTC thumbnail."""
+    if not track.art_bytes:
+        return None
+    http = session or requests.Session()
+    upgraded = _download_itunes_art(
+        track,
+        download_dir=download_dir,
+        session=http,
+        timeout_seconds=ITUNES_TIMEOUT_SECONDS,
+    )
+    if upgraded is None:
+        return None
+    upgraded_max = max(upgraded.width, upgraded.height)
+    if upgraded_max <= smtc_max_dim:
+        return None
+    with Image.open(io.BytesIO(track.art_bytes)) as image:
+        smtc_w, smtc_h = image.size
+    return ItunesUpgradeResult(
+        image_bytes=upgraded.image_bytes,
+        width=upgraded.width,
+        height=upgraded.height,
+        smtc_width=smtc_w,
+        smtc_height=smtc_h,
+        detail=upgraded.detail,
+    )
+
+
 def resolve_track_art(
     track,
     *,
@@ -218,25 +264,13 @@ def resolve_track_art(
     if track.art_bytes:
         with Image.open(io.BytesIO(track.art_bytes)) as image:
             width, height = image.size
-        smtc = ResolvedArt(
+        return ResolvedArt(
             image_bytes=track.art_bytes,
             source="smtc_thumbnail",
             width=width,
             height=height,
             detail=f"{len(track.art_bytes)} bytes",
         )
-        if max(width, height) < ITUNES_UPGRADE_OVER_SMTC_MIN_PX:
-            upgraded = _download_itunes_art(track, download_dir=download_dir, session=http)
-            if upgraded and max(upgraded.width, upgraded.height) > max(width, height):
-                logger.info(
-                    "Preferring iTunes art over SMTC thumbnail (%dx%d -> %dx%d)",
-                    width,
-                    height,
-                    upgraded.width,
-                    upgraded.height,
-                )
-                return upgraded
-        return smtc
 
     if track.art_url:
         from now_playing_desktops.spotify_art import download_album_art
@@ -254,7 +288,12 @@ def resolve_track_art(
             detail=track.art_url,
         )
 
-    itunes = _download_itunes_art(track, download_dir=download_dir, session=http)
+    itunes = _download_itunes_art(
+        track,
+        download_dir=download_dir,
+        session=http,
+        timeout_seconds=ITUNES_BLOCKING_TIMEOUT_SECONDS,
+    )
     if itunes is not None:
         return itunes
 

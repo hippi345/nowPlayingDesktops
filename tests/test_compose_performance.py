@@ -14,8 +14,15 @@ from tests.helpers import FakePlatform, make_runner, make_sample_cover, mock_loa
 LAPTOP_CANVAS = (2496, 1664)
 
 
-def test_compose_2496x1664_under_three_seconds():
+def test_compose_2496x1664_under_budget():
     cover = make_sample_cover(1000)
+    compose_wallpaper(
+        cover,
+        title="River",
+        artist="Cheat Codes",
+        width=LAPTOP_CANVAS[0],
+        height=LAPTOP_CANVAS[1],
+    )
     started = time.perf_counter()
     composed = compose_wallpaper(
         cover,
@@ -27,7 +34,7 @@ def test_compose_2496x1664_under_three_seconds():
     elapsed = time.perf_counter() - started
     print(f"compose_2496x1664_seconds={elapsed:.3f}")
     assert composed.size == LAPTOP_CANVAS
-    assert elapsed < 3.0, f"compose took {elapsed:.2f}s"
+    assert elapsed < 0.5, f"compose took {elapsed:.2f}s"
 
 
 def test_apply_does_not_block_on_compose_verification(tmp_path: Path, monkeypatch):

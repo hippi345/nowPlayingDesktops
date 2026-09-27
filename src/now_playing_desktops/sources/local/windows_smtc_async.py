@@ -13,8 +13,8 @@ from now_playing_desktops.sources.local.windows_smtc_winrt import WinrtTimeoutEr
 
 logger = logging.getLogger(__name__)
 
-_THUMBNAIL_REFETCH_ATTEMPTS = 5
-_THUMBNAIL_REFETCH_DELAY_SECONDS = 0.3
+_THUMBNAIL_MISSING_ATTEMPTS = 3
+_THUMBNAIL_MISSING_DELAY_SECONDS = 0.12
 
 
 def _session_is_playing(playback) -> bool:
@@ -25,28 +25,33 @@ def _session_is_playing(playback) -> bool:
 
 
 async def _read_thumbnail_with_refetch(session, props, *, is_playing: bool) -> bytes | None:
-    if not is_playing:
-        thumb = props.thumbnail
-        if thumb is None:
+    thumb = props.thumbnail
+    if thumb is not None:
+        art_bytes = await read_thumbnail_reference_bytes_once(thumb)
+        if art_bytes:
+            return art_bytes
+        if not is_playing:
             return None
-        return await read_thumbnail_reference_bytes_once(thumb)
+
+    if thumb is None and not is_playing:
+        return None
 
     current_props = props
-    for attempt in range(_THUMBNAIL_REFETCH_ATTEMPTS):
+    for attempt in range(_THUMBNAIL_MISSING_ATTEMPTS):
+        if attempt > 0:
+            await asyncio.sleep(_THUMBNAIL_MISSING_DELAY_SECONDS)
+            refreshed = await winrt_wait(
+                session.try_get_media_properties_async(),
+                operation="GlobalSystemMediaTransportControlsSession.try_get_media_properties_async",
+            )
+            if refreshed is not None:
+                current_props = refreshed
         thumb = current_props.thumbnail
-        if thumb is not None:
-            art_bytes = await read_thumbnail_reference_bytes_once(thumb)
-            if art_bytes:
-                return art_bytes
-        if attempt + 1 >= _THUMBNAIL_REFETCH_ATTEMPTS:
-            break
-        await asyncio.sleep(_THUMBNAIL_REFETCH_DELAY_SECONDS)
-        refreshed = await winrt_wait(
-            session.try_get_media_properties_async(),
-            operation="GlobalSystemMediaTransportControlsSession.try_get_media_properties_async",
-        )
-        if refreshed is not None:
-            current_props = refreshed
+        if thumb is None:
+            continue
+        art_bytes = await read_thumbnail_reference_bytes_once(thumb)
+        if art_bytes:
+            return art_bytes
     return None
 
 

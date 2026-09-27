@@ -9,8 +9,8 @@ from now_playing_desktops.sources.local.windows_smtc_winrt import WinrtTimeoutEr
 
 logger = logging.getLogger(__name__)
 
-_THUMBNAIL_RETRY_ATTEMPTS = 5
-_THUMBNAIL_RETRY_DELAY_SECONDS = 0.3
+_THUMBNAIL_RETRY_ATTEMPTS = 3
+_THUMBNAIL_RETRY_DELAY_SECONDS = 0.12
 
 
 async def read_random_access_stream_bytes(stream) -> bytes | None:

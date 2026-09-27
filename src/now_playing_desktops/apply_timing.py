@@ -48,15 +48,17 @@ class ApplyTiming:
                 self.set_seconds += elapsed
             logger.debug("Apply stage %s took %.3fs", name, elapsed)
 
-    def log_summary(self) -> None:
+    def log_summary(self, *, prefix: str | None = None) -> None:
         if not self.enabled:
             return
         total = sum(self._stages.values())
         for name, elapsed in sorted(self._stages.items()):
             if name not in {"fetch", "compose", "save", "set"}:
                 logger.debug("Apply stage %s took %.3fs (detail)", name, elapsed)
+        lead = f"{prefix} " if prefix else ""
         logger.info(
-            "Apply took %.2fs (fetch=%.2fs, compose=%.2fs, save=%.2fs, set=%.2fs, cache=%s)",
+            "%sApply took %.2fs (fetch=%.2fs, compose=%.2fs, save=%.2fs, set=%.2fs, cache=%s)",
+            lead,
             total,
             self.fetch_seconds,
             self.compose_seconds,

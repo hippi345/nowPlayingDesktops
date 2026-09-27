@@ -37,8 +37,18 @@ def test_artist_names_match_fuzzy():
     assert not artist_names_match("Artist A", "Totally Different")
 
 
-def test_resolve_track_art_upgrades_small_smtc_with_itunes(tmp_path: Path, caplog):
-    import logging
+def test_resolve_track_art_keeps_small_smtc_without_blocking_itunes(tmp_path: Path):
+    small = _png_bytes((300, 300))
+    track = TrackPlayback("id", "", "Title", "Artist", True, art_bytes=small)
+    session = MagicMock()
+    resolved = resolve_track_art(track, download_dir=tmp_path, session=session)
+    assert resolved.source == "smtc_thumbnail"
+    assert resolved.width == 300
+    session.get.assert_not_called()
+
+
+def test_try_fetch_itunes_upgrade_when_larger(tmp_path: Path):
+    from now_playing_desktops.art_resolution import try_fetch_itunes_upgrade
 
     small = _png_bytes((300, 300))
     large = _png_bytes((1000, 1000), color=(200, 10, 10))
@@ -53,11 +63,14 @@ def test_resolve_track_art_upgrades_small_smtc_with_itunes(tmp_path: Path, caplo
         ),
         MagicMock(status_code=200, content=large),
     ]
-    with caplog.at_level(logging.INFO):
-        resolved = resolve_track_art(track, download_dir=tmp_path, session=session)
-    assert resolved.source == "itunes"
-    assert resolved.width == 1000
-    assert "Preferring iTunes art over SMTC thumbnail" in caplog.text
+    upgraded = try_fetch_itunes_upgrade(
+        track,
+        smtc_max_dim=300,
+        download_dir=tmp_path,
+        session=session,
+    )
+    assert upgraded is not None
+    assert upgraded.width == 1000
 
 
 def test_resolve_track_art_keeps_large_smtc_without_itunes_call(tmp_path: Path):
