@@ -39,16 +39,25 @@ class WindowsWallpaperPlatform:
         self._per_monitor = sys.platform == "win32" and idesktop_wallpaper_available()
 
     def set_wallpaper(self, image_path: Path, *, screen_id: str | None = None) -> None:
+        from PIL import Image
+
         from now_playing_desktops.platforms.windows_restore import (
-            apply_windows_fill_wallpaper_style,
+            apply_windows_wallpaper_style_for_image,
         )
 
         path_str = str(image_path.resolve())
+        monitor_w, monitor_h = self._monitor_pixel_size_for_screen(screen_id)
+        with Image.open(image_path) as image:
+            image_w, image_h = image.size
+        apply_windows_wallpaper_style_for_image(
+            image_width=image_w,
+            image_height=image_h,
+            monitor_width=monitor_w,
+            monitor_height=monitor_h,
+        )
         if screen_id is not None and self._per_monitor:
-            apply_windows_fill_wallpaper_style()
             _set_wallpaper_on_monitor(path_str, screen_id)
             return
-        apply_windows_fill_wallpaper_style()
         if not ctypes.windll.user32.SystemParametersInfoW(
             SPI_SETDESKWALLPAPER,
             0,
@@ -79,15 +88,25 @@ class WindowsWallpaperPlatform:
     def get_primary_screen_size(self) -> tuple[int, int]:
         if sys.platform != "win32":
             return 1920, 1080
+        return self._monitor_pixel_size_for_screen(None)
+
+    def _monitor_pixel_size_for_screen(self, screen_id: str | None) -> tuple[int, int]:
         from now_playing_desktops.platforms.windows_monitors import (
+            compose_canvas_pixel_size,
             enumerate_monitors,
             largest_monitor_pixel_size,
         )
 
         monitors = enumerate_monitors()
+        if screen_id is not None:
+            for monitor in monitors:
+                if monitor.monitor_id == screen_id:
+                    return monitor.width, monitor.height
         for monitor in monitors:
             if monitor.is_primary:
                 return monitor.width, monitor.height
+        if monitors:
+            return compose_canvas_pixel_size(monitors)
         return largest_monitor_pixel_size(monitors)
 
     def list_screens(self) -> list[ScreenInfo]:

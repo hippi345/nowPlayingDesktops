@@ -146,13 +146,21 @@ def test_enumerate_monitors_uses_get_monitor_info_not_lprect():
 
 
 def test_windows_per_monitor_set_when_com_available(tmp_path):
+    from PIL import Image
+
     image = tmp_path / "bg.jpg"
-    image.write_bytes(b"x")
+    Image.new("RGB", (64, 64), (40, 80, 120)).save(image, format="JPEG")
     with (
         patch.object(sys, "platform", "win32"),
+        patch("now_playing_desktops.platforms.windows_restore.winreg"),
         patch(
             "now_playing_desktops.platforms.windows_com.idesktop_wallpaper_available",
             return_value=True,
+        ),
+        patch.object(
+            WindowsWallpaperPlatform,
+            "_monitor_pixel_size_for_screen",
+            return_value=(64, 64),
         ),
         patch(
             "now_playing_desktops.platforms.windows._set_wallpaper_on_monitor",

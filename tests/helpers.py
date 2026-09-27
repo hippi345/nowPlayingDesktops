@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -8,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 from now_playing_desktops.platforms.base import ScreenInfo
 from now_playing_desktops.runner import NowPlayingRunner, RunnerDeps
 
-ARTIFACTS_DIR = Path("/opt/cursor/artifacts")
+ARTIFACTS_DIR = Path(os.environ.get("NP_ARTIFACTS_DIR", "/opt/cursor/artifacts"))
 
 
 def make_sample_cover(size: int = 640) -> Image.Image:

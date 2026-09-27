@@ -37,6 +37,7 @@ _MAX_WALLPAPER_CHARS = 260
 
 DESKTOP_KEY = r"Control Panel\Desktop"
 WALLPAPER_STYLE_FILL = "10"
+WALLPAPER_STYLE_CENTER = "0"
 TILE_WALLPAPER_OFF = "0"
 COLORS_KEY = r"Control Panel\Colors"
 WALLPAPERS_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Wallpapers"
@@ -162,14 +163,43 @@ def _pick_wallpaper_source_bytes(
 
 
 def apply_windows_fill_wallpaper_style() -> None:
-    """Force Fill (not Center/Tile) so the bitmap matches the monitor size."""
+    """Force Fill (not Center/Tile) when the bitmap may not match the monitor size."""
+    _apply_wallpaper_style(WALLPAPER_STYLE_FILL)
+
+
+def apply_windows_center_wallpaper_style() -> None:
+    """Use centered 1:1 placement when the bitmap matches the monitor pixel size."""
+    _apply_wallpaper_style(WALLPAPER_STYLE_CENTER)
+
+
+def apply_windows_wallpaper_style_for_image(
+    *,
+    image_width: int,
+    image_height: int,
+    monitor_width: int,
+    monitor_height: int,
+) -> str:
+    """Pick Fill vs Center so exact-size renders are not upscaled by the shell."""
+    if (
+        image_width == monitor_width
+        and image_height == monitor_height
+        and image_width > 0
+        and image_height > 0
+    ):
+        apply_windows_center_wallpaper_style()
+        return WALLPAPER_STYLE_CENTER
+    apply_windows_fill_wallpaper_style()
+    return WALLPAPER_STYLE_FILL
+
+
+def _apply_wallpaper_style(style: str) -> None:
     if winreg is None:
         return
     _write_reg_string(
         winreg.HKEY_CURRENT_USER,
         DESKTOP_KEY,
         "WallpaperStyle",
-        WALLPAPER_STYLE_FILL,
+        style,
     )
     _write_reg_string(
         winreg.HKEY_CURRENT_USER,
@@ -179,7 +209,7 @@ def apply_windows_fill_wallpaper_style() -> None:
     )
     logger.debug(
         "Set WallpaperStyle=%s TileWallpaper=%s before applying wallpaper",
-        WALLPAPER_STYLE_FILL,
+        style,
         TILE_WALLPAPER_OFF,
     )
 

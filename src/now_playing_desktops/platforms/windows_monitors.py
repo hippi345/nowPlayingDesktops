@@ -29,6 +29,10 @@ class _MONITORINFO(ctypes.Structure):
     ]
 
 
+class _MONITORINFOEXW(_MONITORINFO):
+    _fields_ = [("szDevice", wintypes.WCHAR * 32)]
+
+
 MONITORINFOF_PRIMARY = 1
 SM_CXSCREEN = 0
 SM_CYSCREEN = 1
@@ -98,19 +102,9 @@ def _effective_dpi_for_hmonitor(hmonitor: int) -> tuple[int, int]:
 
 
 def set_process_dpi_aware() -> None:
-    import contextlib
+    from now_playing_desktops.platforms.windows_dpi import set_process_dpi_aware as _bootstrap
 
-    if sys.platform != "win32" or user32 is None:
-        return
-    try:
-        user32.SetProcessDpiAwarenessContext(-4)
-        return
-    except (AttributeError, OSError, TypeError):
-        pass
-    with contextlib.suppress(AttributeError, OSError):
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)
-    with contextlib.suppress(AttributeError, OSError):
-        user32.SetProcessDPIAware()
+    _bootstrap()
 
 
 def primary_screen_pixel_size() -> tuple[int, int]:
@@ -164,7 +158,13 @@ def monitor_info_from_win32(
     *,
     fallback_width: int,
     fallback_height: int,
+    device_name: str | None = None,
 ) -> MonitorInfo:
+    from now_playing_desktops.platforms.windows_dpi import (
+        enum_display_settings_pixel_size,
+        physical_pixel_size_from_rect,
+    )
+
     rect = info.rcMonitor
     width, height = monitor_size_from_rect(rect.left, rect.top, rect.right, rect.bottom)
     width, height, substituted = ensure_positive_monitor_size(
@@ -172,6 +172,15 @@ def monitor_info_from_win32(
         height,
         fallback_width=fallback_width,
         fallback_height=fallback_height,
+    )
+    dpi_x, dpi_y = _effective_dpi_for_hmonitor(int(hmonitor))
+    native_size = enum_display_settings_pixel_size(device_name) if device_name else None
+    width, height = physical_pixel_size_from_rect(
+        rect_width=width,
+        rect_height=height,
+        dpi_x=dpi_x,
+        dpi_y=dpi_y,
+        native_size=native_size,
     )
     if substituted:
         logger.warning(
@@ -185,7 +194,6 @@ def monitor_info_from_win32(
             height,
         )
     is_primary = bool(info.dwFlags & MONITORINFOF_PRIMARY)
-    dpi_x, dpi_y = _effective_dpi_for_hmonitor(int(hmonitor))
     logger.debug(
         "Win32 monitor %s rect=%sx%s at (%s,%s) dpi=%sx%s primary=%s",
         hmonitor,
@@ -225,16 +233,18 @@ def enumerate_monitors() -> list[MonitorInfo]:
         wintypes.LPARAM,
     )
     def callback(hmonitor, _hdc, _lprc_monitor, _data):
-        info = _MONITORINFO()
-        info.cbSize = ctypes.sizeof(_MONITORINFO)
+        info = _MONITORINFOEXW()
+        info.cbSize = ctypes.sizeof(_MONITORINFOEXW)
         if not user32.GetMonitorInfoW(hmonitor, ctypes.byref(info)):
             return True
+        device = str(info.szDevice.value)
         collected.append(
             monitor_info_from_win32(
                 int(hmonitor),
                 info,
                 fallback_width=fallback_w,
                 fallback_height=fallback_h,
+                device_name=device,
             )
         )
         return True
@@ -276,4 +286,4 @@ def largest_monitor_pixel_size(monitors: list[MonitorInfo]) -> tuple[int, int]:
 
 
 if sys.platform == "win32":
-    set_process_dpi_aware()
+    set_process_dpi_aware()  # noqa: E402 — import-time bootstrap for library use
