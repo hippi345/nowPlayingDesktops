@@ -16,7 +16,7 @@ Set your desktop wallpaper to the album art of whatever you are playing on Spoti
 ## Requirements
 
 - Python **3.12+**
-- [Spotify Developer](https://developer.spotify.com/dashboard) app (Client ID and Client Secret)
+- [Spotify Developer](https://developer.spotify.com/dashboard) app (Client ID; Client Secret optional — see Setup)
 - Spotify account with an active session while using the app
 
 ### Platform notes
@@ -45,13 +45,19 @@ On macOS:
 pip install -e ".[macos,dev]"
 ```
 
-Copy the example environment file and fill in your Spotify app credentials:
+Copy the example environment file and add your Spotify app **Client ID**:
 
 ```bash
 cp .env.example .env
 # Edit .env — never commit real secrets
 export $(grep -v '^#' .env | xargs)   # optional in an interactive shell
 ```
+
+**PKCE (recommended):** leave `SPOTIPY_CLIENT_SECRET` unset, add the loopback redirect URI in the Spotify dashboard (below), then run `now-playing login YOUR_SPOTIFY_USERNAME` once. Background `run` and login autostart reuse the cached token and refresh it silently.
+
+**Legacy client-secret flow:** set `SPOTIPY_CLIENT_SECRET` in `.env` as well; the app keeps the previous Spotipy behavior (browser sign-in on first `run` if needed).
+
+Apps in [Development mode](https://developer.spotify.com/documentation/web-api/concepts/quota-modes) only work for users on the app's allowlist (Dashboard → your app → Settings → **Users Management**). Spotify currently allows up to **five** authorized users per Development mode app (plus the owner). Extended quota mode is required for wider distribution.
 
 For **login autostart**, the app does not inherit your shell environment. Put a copy of `.env` in the per-user config directory (loaded automatically at startup):
 
@@ -66,9 +72,9 @@ You can also pass `--env-file PATH` on `run` and `autostart enable`, or set `NOW
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `SPOTIPY_CLIENT_ID` | Yes | Spotify app Client ID |
-| `SPOTIPY_CLIENT_SECRET` | Yes | Spotify app Client Secret |
+| `SPOTIPY_CLIENT_SECRET` | No | Client Secret (legacy flow only; omit for PKCE) |
 | `SPOTIPY_REDIRECT_URI` | No | OAuth redirect (default `http://127.0.0.1:8897/callback`) |
-| `SPOTIPY_CLIENT_USERNAME` | No | Spotify username (used for OAuth token cache; recommended for autostart) |
+| `SPOTIPY_CLIENT_USERNAME` | No | Spotify username (token cache key; recommended for autostart) |
 
 In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), open your app → **Settings** → **Redirect URIs** and add this exact URI (unless you override `SPOTIPY_REDIRECT_URI`):
 
@@ -79,17 +85,19 @@ If another program is already listening on that port, set `SPOTIPY_REDIRECT_URI`
 ## Usage
 
 ```bash
+now-playing login YOUR_SPOTIFY_USERNAME   # once, PKCE or legacy
 now-playing run YOUR_SPOTIFY_USERNAME
 ```
 
 Legacy entry points `now-playing-macos` and `now-playing-windows` still work.
 
-- **`now-playing run [USER] [--once] [--env-file PATH]`** — poll Spotify and update the wallpaper. `USER` is optional when `SPOTIPY_CLIENT_USERNAME` is set (recommended in your autostart `.env`).
+- **`now-playing login [USER] [--env-file PATH]`** — interactive Spotify sign-in; stores a per-user token cache under your app config directory.
+- **`now-playing run [USER] [--once] [--env-file PATH]`** — poll Spotify and update the wallpaper. `USER` is optional when `SPOTIPY_CLIENT_USERNAME` is set (recommended in your autostart `.env`). PKCE runs expect a prior `login`; legacy client-secret runs may still open a browser on first start.
 - **`now-playing restore`** — restore the wallpaper saved at session start (uses path or platform snapshot).
-- **`now-playing diag`** — (Windows) print monitor sizes, DPI, compose canvas, wallpaper style, and registry state without Spotify credentials.
+- **`now-playing diag`** — (Windows) print Spotify auth mode and token-cache status, plus monitor sizes, DPI, compose canvas, wallpaper style, and registry state (no secrets printed).
 - **`now-playing autostart enable [USER] [--env-file PATH]|disable|status`** — register login autostart. `enable` writes an absolute `--env-file` path and your Spotify username into the Windows Run entry, XDG autostart `.desktop`, or macOS LaunchAgent (see autostart `.env` paths above).
 
-On first run, Spotipy opens a browser flow for `user-read-currently-playing`. Stop with `Ctrl+C`; the original wallpaper is restored automatically.
+Stop with `Ctrl+C`; the original wallpaper is restored automatically.
 
 ## Restore and crash recovery
 
@@ -106,6 +114,7 @@ Session state lives in the app cache (see `state_file_path()` in `config.py`). O
 | Windows wrong resolution | Run `now-playing diag` and check `dmPels` vs compose canvas; delete stale `%APPDATA%\\now-playing-desktops\\cache\\composed\\*.png` after upgrades |
 | Autostart errors with no console | See `%APPDATA%\\now-playing-desktops\\logs\\now-playing.log` (rotating file log; same path under the platform config dir on Linux/macOS) |
 | OAuth “port in use” / WinError 10013 | Set `SPOTIPY_REDIRECT_URI` to another `127.0.0.1` port and register it in the Spotify dashboard |
+| PKCE `run` says to run `login` | Run `now-playing login` with the same `--env-file` and username once |
 
 ## Development
 

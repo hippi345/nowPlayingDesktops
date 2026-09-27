@@ -14,7 +14,11 @@ if sys.platform == "win32":
 
     _win32_dpi_bootstrap()
 
-from now_playing_desktops.auth import create_spotify_client
+from now_playing_desktops.auth import (
+    create_spotify_client,
+    interactive_sign_in,
+    spotify_auth_diag_lines,
+)
 from now_playing_desktops.config import (
     DEFAULT_POLL_INTERVAL_SECONDS,
     default_cache_dir,
@@ -38,7 +42,7 @@ def _peek_command_and_verbose(argv: list[str]) -> tuple[str, bool]:
     verbose = _argv_requests_verbose(argv)
     command = "run"
     for token in argv:
-        if token in {"run", "restore", "autostart", "diag"}:
+        if token in {"run", "restore", "autostart", "diag", "login"}:
             command = token
             break
     return command, verbose
@@ -133,6 +137,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Spotify username to embed in autostart (optional if SPOTIPY_CLIENT_USERNAME is set).",
     )
 
+    login_parser = subparsers.add_parser(
+        "login",
+        help="Interactive Spotify sign-in (stores a token cache for background runs).",
+        parents=[shared],
+    )
+    login_parser.add_argument(
+        "username",
+        nargs="?",
+        default=None,
+        help="Spotify username for OAuth (optional if SPOTIPY_CLIENT_USERNAME is set).",
+    )
+
     subparsers.add_parser(
         "diag",
         help="Print Windows display/wallpaper diagnostics (no Spotify credentials).",
@@ -222,7 +238,24 @@ def _autostart(args: argparse.Namespace) -> int:
     return 0
 
 
-def _diag(_args: argparse.Namespace) -> int:
+def _login(args: argparse.Namespace) -> int:
+    username = resolve_spotify_username(args.username)
+    if username is None:
+        print(
+            "Spotify username required: pass it on the command line or set "
+            "SPOTIPY_CLIENT_USERNAME.",
+            file=sys.stderr,
+        )
+        return 1
+    token = interactive_sign_in(username)
+    if token is None:
+        print("Spotify sign-in failed for", username, file=sys.stderr)
+        return 1
+    print("Spotify sign-in succeeded.")
+    return 0
+
+
+def _diag(args: argparse.Namespace) -> int:
     if sys.platform != "win32":
         print("diag is only available on Windows", file=sys.stderr)
         return 1
@@ -233,8 +266,10 @@ def _diag(_args: argparse.Namespace) -> int:
     from now_playing_desktops.platforms.windows_dpi import bootstrap_process_dpi_awareness
 
     bootstrap_process_dpi_awareness()
+    username = resolve_spotify_username(getattr(args, "username", None))
+    auth_lines = spotify_auth_diag_lines(username)
     report = collect_windows_diag_report()
-    print(format_windows_diag_report(report))
+    print("\n".join([*auth_lines, "", format_windows_diag_report(report)]))
     return 0
 
 
@@ -306,6 +341,8 @@ def main(argv: list[str] | None = None) -> int:
         return _restore(args)
     if args.command == "autostart":
         return _autostart(args)
+    if args.command == "login":
+        return _login(args)
     if args.command == "diag":
         return _diag(args)
     parser.error(f"Unknown command {args.command!r}")
@@ -314,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _legacy_argv() -> list[str]:
     argv = sys.argv[1:]
-    if argv and argv[0] not in {"run", "restore", "autostart"}:
+    if argv and argv[0] not in {"run", "restore", "autostart", "diag", "login"}:
         return ["run", *argv]
     return argv
 

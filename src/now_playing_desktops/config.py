@@ -42,3 +42,9 @@ def default_cache_dir() -> Path:
 
 def state_file_path() -> Path:
     return user_config_dir() / STATE_FILENAME
+
+
+def spotify_token_cache_path(username: str) -> Path:
+    """OAuth token cache file for a Spotify username (PKCE or client-secret flow)."""
+    safe = username.replace("/", "_").replace("\\", "_")
+    return user_config_dir() / f"spotify-token-{safe}.cache"

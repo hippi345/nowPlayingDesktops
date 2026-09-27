@@ -26,6 +26,9 @@ def test_cli_parser_accepts_run_restore_and_once():
     assert args.poll_interval == 2.2
     restore_args = parser.parse_args(["restore"])
     assert restore_args.command == "restore"
+    login_args = parser.parse_args(["login", "user", "--env-file", "/tmp/.env"])
+    assert login_args.command == "login"
+    assert login_args.username == "user"
 
 
 def test_cli_verbose_after_subcommand_parses():

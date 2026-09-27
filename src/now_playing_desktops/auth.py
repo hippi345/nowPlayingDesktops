@@ -3,18 +3,28 @@
 from __future__ import annotations
 
 import errno
+import logging
 import os
 import socket
 import sys
 from collections.abc import Callable
+from typing import Literal
 from urllib.parse import urlparse
 
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.cache_handler import CacheFileHandler
+from spotipy.oauth2 import SpotifyOAuth, SpotifyPKCE
 from spotipy.util import get_host_port
+
+from now_playing_desktops.config import spotify_token_cache_path, user_config_dir
 
 SCOPE = "user-read-currently-playing"
 DEFAULT_REDIRECT_URI = "http://127.0.0.1:8897/callback"
+
+SpotifyAuthMode = Literal["client_secret", "pkce"]
+type SpotifyAuthManager = SpotifyOAuth | SpotifyPKCE
+
+logger = logging.getLogger(__name__)
 
 
 class SpotifyConfigError(RuntimeError):
@@ -27,9 +37,18 @@ def _require_env(name: str) -> str:
         raise SpotifyConfigError(
             f"Missing required environment variable {name}. "
             "Create a Spotify app at https://developer.spotify.com/dashboard "
-            f"and set {name}, SPOTIPY_CLIENT_SECRET, and optionally SPOTIPY_REDIRECT_URI."
+            f"and set {name} (and SPOTIPY_CLIENT_SECRET only if using the legacy flow)."
         )
     return value
+
+
+def spotify_auth_mode() -> SpotifyAuthMode | None:
+    """Return the selected auth mode, or ``None`` when ``SPOTIPY_CLIENT_ID`` is missing."""
+    if not os.environ.get("SPOTIPY_CLIENT_ID", "").strip():
+        return None
+    if os.environ.get("SPOTIPY_CLIENT_SECRET", "").strip():
+        return "client_secret"
+    return "pkce"
 
 
 def spotify_redirect_uri() -> str:
@@ -49,6 +68,14 @@ def port_in_use_message(port: int) -> str:
     return (
         f"port {port} is in use; set SPOTIPY_REDIRECT_URI to another 127.0.0.1 port "
         f"(e.g. http://127.0.0.1:8898/callback) and register it in the Spotify dashboard"
+    )
+
+
+def non_interactive_auth_message(username: str) -> str:
+    """Tell the user how to sign in when a background run has no usable token cache."""
+    return (
+        f"No valid cached Spotify token for {username!r}. "
+        "Run `now-playing login` with the same --env-file and Spotify username to sign in once."
     )
 
 
@@ -76,13 +103,20 @@ def _needs_local_callback_server(redirect_uri: str, *, open_browser: bool) -> bo
     )
 
 
-def _has_cached_token(manager: SpotifyOAuth) -> bool:
+def cache_handler_for_user(username: str) -> CacheFileHandler:
+    """Per-user token cache under the application config directory."""
+    user_config_dir().mkdir(parents=True, exist_ok=True)
+    return CacheFileHandler(cache_path=str(spotify_token_cache_path(username)))
+
+
+def cached_token_available(manager: SpotifyAuthManager) -> bool:
+    """Return whether a usable token exists in the cache (refreshing if expired)."""
     token_info = manager.cache_handler.get_cached_token()
     return manager.validate_token(token_info) is not None
 
 
-def _precheck_oauth_redirect_port(manager: SpotifyOAuth) -> None:
-    if _has_cached_token(manager):
+def _precheck_oauth_redirect_port(manager: SpotifyAuthManager) -> None:
+    if cached_token_available(manager):
         return
     if not _needs_local_callback_server(manager.redirect_uri, open_browser=manager.open_browser):
         return
@@ -100,10 +134,33 @@ def _precheck_oauth_redirect_port(manager: SpotifyOAuth) -> None:
         sock.close()
 
 
-def _get_access_token(manager: SpotifyOAuth, *, as_dict: bool = False) -> str | None:
+def _access_token_from_cache(manager: SpotifyAuthManager) -> str | None:
+    token_info = manager.cache_handler.get_cached_token()
+    validated = manager.validate_token(token_info)
+    if validated is None:
+        return None
+    return validated["access_token"]
+
+
+def _get_access_token(
+    manager: SpotifyAuthManager,
+    *,
+    username: str,
+    as_dict: bool = False,
+    interactive: bool = True,
+) -> str | None:
+    if not interactive:
+        token = _access_token_from_cache(manager)
+        if token is not None:
+            return token
+        logger.error(non_interactive_auth_message(username))
+        return None
+
     _precheck_oauth_redirect_port(manager)
     try:
-        return manager.get_access_token(as_dict=as_dict)
+        if isinstance(manager, SpotifyOAuth):
+            return manager.get_access_token(as_dict=as_dict)
+        return manager.get_access_token()
     except OSError as exc:
         if _is_bind_port_error(exc):
             _, port = oauth_redirect_host_port(manager.redirect_uri)
@@ -111,46 +168,116 @@ def _get_access_token(manager: SpotifyOAuth, *, as_dict: bool = False) -> str | 
         raise
 
 
-def spotify_oauth_manager(username: str) -> SpotifyOAuth | None:
+def spotify_oauth_manager(
+    username: str,
+    *,
+    interactive: bool = True,
+) -> SpotifyAuthManager | None:
     """Build a Spotipy OAuth manager that can refresh tokens."""
     try:
         client_id = _require_env("SPOTIPY_CLIENT_ID")
-        client_secret = _require_env("SPOTIPY_CLIENT_SECRET")
     except SpotifyConfigError as exc:
         print(exc, file=sys.stderr)
         return None
 
+    mode = spotify_auth_mode()
+    if mode is None:
+        print(
+            "Missing required environment variable SPOTIPY_CLIENT_ID.",
+            file=sys.stderr,
+        )
+        return None
+
+    logger.info("Spotify auth mode: %s", mode)
+
     redirect_uri = spotify_redirect_uri()
-    return SpotifyOAuth(
+    cache_handler = cache_handler_for_user(username)
+
+    if mode == "client_secret":
+        try:
+            client_secret = _require_env("SPOTIPY_CLIENT_SECRET")
+        except SpotifyConfigError as exc:
+            print(exc, file=sys.stderr)
+            return None
+        return SpotifyOAuth(
+            client_id=client_id,
+            client_secret=client_secret,
+            redirect_uri=redirect_uri,
+            scope=SCOPE,
+            cache_handler=cache_handler,
+            open_browser=True,
+        )
+
+    return SpotifyPKCE(
         client_id=client_id,
-        client_secret=client_secret,
         redirect_uri=redirect_uri,
         scope=SCOPE,
-        username=username,
-        open_browser=True,
+        cache_handler=cache_handler,
+        open_browser=interactive,
     )
 
 
 def prompt_for_token(username: str) -> str | None:
     """Prompt the user to authorize and return an access token."""
-    manager = spotify_oauth_manager(username)
+    return interactive_sign_in(username)
+
+
+def interactive_sign_in(username: str) -> str | None:
+    """Open the browser (or paste URL) flow for the first interactive sign-in."""
+    manager = spotify_oauth_manager(username, interactive=True)
     if manager is None:
         return None
-    return _get_access_token(manager, as_dict=False)
+    return _get_access_token(manager, username=username, as_dict=False, interactive=True)
 
 
 def create_spotify_client(
     username: str,
-) -> tuple[spotipy.Spotify, SpotifyOAuth, Callable[[], None]] | None:
+) -> tuple[spotipy.Spotify, SpotifyAuthManager, Callable[[], None]] | None:
     """Return Spotify client, OAuth manager, and a token-refresh callback."""
-    manager = spotify_oauth_manager(username)
+    mode = spotify_auth_mode()
+    interactive = mode == "client_secret"
+    manager = spotify_oauth_manager(username, interactive=interactive)
     if manager is None:
         return None
-    token = _get_access_token(manager, as_dict=False)
+    token = _get_access_token(
+        manager,
+        username=username,
+        as_dict=False,
+        interactive=interactive,
+    )
     if not token:
         return None
 
     def refresh() -> None:
-        _get_access_token(manager, as_dict=False)
+        _get_access_token(
+            manager,
+            username=username,
+            as_dict=False,
+            interactive=interactive,
+        )
 
     return spotipy.Spotify(auth=token), manager, refresh
+
+
+def spotify_auth_diag_lines(username: str | None) -> list[str]:
+    """Human-readable Spotify auth status for ``diag`` (no secrets or tokens)."""
+    mode = spotify_auth_mode()
+    if mode is None:
+        return [
+            "Spotify auth mode: (not configured — set SPOTIPY_CLIENT_ID)",
+            "Spotify cached token: no",
+        ]
+    lines = [f"Spotify auth mode: {mode}"]
+    if not username:
+        lines.append("Spotify cached token: unknown (set SPOTIPY_CLIENT_USERNAME or pass username)")
+        return lines
+    manager = spotify_oauth_manager(username, interactive=False)
+    if manager is None:
+        lines.append("Spotify cached token: no")
+        return lines
+    lines.append(
+        "Spotify cached token: yes"
+        if cached_token_available(manager)
+        else "Spotify cached token: no"
+    )
+    return lines
