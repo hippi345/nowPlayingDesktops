@@ -25,7 +25,19 @@ def _configure_logging(verbose: bool) -> None:
     )
 
 
+def _shared_verbose_parser() -> argparse.ArgumentParser:
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Enable debug logging.",
+    )
+    return shared
+
+
 def build_parser() -> argparse.ArgumentParser:
+    shared = _shared_verbose_parser()
     parser = argparse.ArgumentParser(
         prog="now-playing-desktops",
         description="Set your desktop wallpaper to the currently playing Spotify track.",
@@ -38,7 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = subparsers.add_parser("run", help="Poll Spotify and update the wallpaper.")
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Poll Spotify and update the wallpaper.",
+        parents=[shared],
+    )
     run_parser.add_argument("username", help="Spotify username for OAuth")
     run_parser.add_argument(
         "--poll-interval",
@@ -61,6 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
     restore_parser = subparsers.add_parser(
         "restore",
         help="Restore the wallpaper saved at startup.",
+        parents=[shared],
     )
     restore_parser.add_argument(
         "--state-file",
@@ -72,6 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     autostart_parser = subparsers.add_parser(
         "autostart",
         help="Enable or disable login autostart for the wallpaper runner.",
+        parents=[shared],
     )
     autostart_parser.add_argument(
         "action",
@@ -153,13 +171,22 @@ def _restore(args: argparse.Namespace) -> int:
             poll_interval_seconds=DEFAULT_POLL_INTERVAL_SECONDS,
         )
     )
-    return 0 if runner.restore_original_wallpaper() else 1
+    if runner.restore_original_wallpaper():
+        return 0
+    print("nothing to restore")
+    return 0
+
+
+def _argv_requests_verbose(argv: list[str]) -> bool:
+    return any(token in {"-v", "--verbose"} for token in argv)
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(argv) if argv is not None else sys.argv[1:]
     parser = build_parser()
     args = parser.parse_args(argv)
-    _configure_logging(args.verbose)
+    verbose = bool(getattr(args, "verbose", False)) or _argv_requests_verbose(argv)
+    _configure_logging(verbose)
     if args.command == "run":
         return _run(args)
     if args.command == "restore":
@@ -172,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _legacy_argv() -> list[str]:
     argv = sys.argv[1:]
-    if argv and argv[0] not in {"run", "restore"}:
+    if argv and argv[0] not in {"run", "restore", "autostart"}:
         return ["run", *argv]
     return argv
 

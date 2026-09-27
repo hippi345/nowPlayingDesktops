@@ -57,9 +57,11 @@ export $(grep -v '^#' .env | xargs)   # or set variables in your shell profile
 |----------|----------|-------------|
 | `SPOTIPY_CLIENT_ID` | Yes | Spotify app Client ID |
 | `SPOTIPY_CLIENT_SECRET` | Yes | Spotify app Client Secret |
-| `SPOTIPY_REDIRECT_URI` | No | OAuth redirect (default `http://localhost/`) |
+| `SPOTIPY_REDIRECT_URI` | No | OAuth redirect (default `http://127.0.0.1:8765/callback`) |
 
-In the Spotify Developer Dashboard, add the redirect URI you use (for example `http://localhost/`) to your app settings.
+In the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard), open your app → **Settings** → **Redirect URIs** and add this exact URI (unless you override `SPOTIPY_REDIRECT_URI`):
+
+`http://127.0.0.1:8765/callback`
 
 ## Usage
 

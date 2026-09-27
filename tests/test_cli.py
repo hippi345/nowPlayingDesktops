@@ -17,6 +17,29 @@ def test_cli_parser_accepts_run_restore_and_once():
     assert restore_args.command == "restore"
 
 
+def test_cli_verbose_after_subcommand_parses():
+    args = build_parser().parse_args(["run", "user", "--once", "-v"])
+    assert args.command == "run"
+    assert args.verbose is True
+
+
+def test_cli_verbose_before_subcommand_parses():
+    with patch("now_playing_desktops.cli.NowPlayingRunner") as runner_cls:
+        runner = runner_cls.return_value
+        with (
+            patch("now_playing_desktops.cli.get_platform", return_value=MagicMock()),
+            patch(
+                "now_playing_desktops.cli.create_spotify_client",
+                return_value=(MagicMock(), MagicMock(), MagicMock()),
+            ),
+            patch("now_playing_desktops.cli.logging.basicConfig") as basic_config,
+        ):
+            code = main(["-v", "run", "user", "--once"])
+    assert code == 0
+    basic_config.assert_called_once()
+    assert basic_config.call_args.kwargs.get("level") == 10
+
+
 def test_cli_run_once_invokes_runner(tmp_path: Path):
     platform = MagicMock()
     platform.get_current_wallpaper.return_value = tmp_path / "wall.jpg"
@@ -38,6 +61,22 @@ def test_cli_run_once_invokes_runner(tmp_path: Path):
     assert code == 0
     runner.startup.assert_called_once()
     runner.apply_playback_once.assert_called_once()
+
+
+def test_cli_restore_nothing_to_restore_exits_zero(tmp_path: Path, capsys):
+    platform = MagicMock()
+    runner = MagicMock()
+    runner.restore_original_wallpaper.return_value = False
+
+    with (
+        patch("now_playing_desktops.cli.get_platform", return_value=platform),
+        patch("now_playing_desktops.cli.NowPlayingRunner", return_value=runner),
+        patch("now_playing_desktops.cli.default_cache_dir", return_value=tmp_path / "cache"),
+    ):
+        code = main(["restore"])
+
+    assert code == 0
+    assert "nothing to restore" in capsys.readouterr().out
 
 
 def test_cli_restore_command(tmp_path: Path):

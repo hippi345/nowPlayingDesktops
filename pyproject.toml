@@ -44,7 +44,10 @@ now-playing-windows = "now_playing_desktops.cli:main_windows"
 sources = ["src"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["now_playing_desktops"]
+only-packages = true
+
+[tool.hatch.build.targets.editable]
+dev-mode-dirs = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

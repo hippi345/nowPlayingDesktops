@@ -8,10 +8,12 @@ from now_playing_desktops.platforms import autostart
 
 
 def test_linux_autostart_enable_disable(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    config_home = tmp_path / "xdg-config"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setattr(autostart.sys, "platform", "linux")
     assert autostart.autostart_enabled() is False
     autostart.enable_autostart()
-    desktop = tmp_path / ".config" / "autostart" / "now-playing-desktops.desktop"
+    desktop = config_home / "autostart" / "now-playing-desktops.desktop"
     assert desktop.is_file()
     assert autostart.autostart_enabled() is True
     autostart.disable_autostart()

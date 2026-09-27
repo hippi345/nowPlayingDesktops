@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import plistlib
 import sys
 from pathlib import Path
@@ -93,8 +94,15 @@ def _windows_disable_autostart() -> None:
         pass
 
 
+def _linux_config_dir() -> Path:
+    xdg = os.environ.get("XDG_CONFIG_HOME", "").strip()
+    if xdg:
+        return Path(xdg)
+    return Path.home() / ".config"
+
+
 def _linux_desktop_path() -> Path:
-    return Path.home() / ".config" / "autostart" / "now-playing-desktops.desktop"
+    return _linux_config_dir() / "autostart" / "now-playing-desktops.desktop"
 
 
 def _linux_autostart_enabled() -> bool:

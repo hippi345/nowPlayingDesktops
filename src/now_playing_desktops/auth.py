@@ -10,7 +10,7 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 
 SCOPE = "user-read-currently-playing"
-DEFAULT_REDIRECT_URI = "http://localhost/"
+DEFAULT_REDIRECT_URI = "http://127.0.0.1:8765/callback"
 
 
 class SpotifyConfigError(RuntimeError):
