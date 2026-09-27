@@ -66,8 +66,10 @@ class NowPlayingRunner:
         self.deps = deps
         self._composed_cache = ComposedArtCache(deps.cache_dir / "composed")
         self._download_dir = deps.cache_dir / "downloads"
-        self._last_composed_identity: tuple[str, str] | None = None
+        self._last_applied_track_id: str | None = None
         self._now_playing_wallpaper_active: bool = False
+        self._upgraded_art_bytes: dict[str, bytes] = {}
+        self._upgrade_attempted_track_ids: set[str] = set()
         self._state = WallpaperSessionState.load(deps.state_path)
         self._restore_registered = False
         self._render_errors_logged: set[str] = set()
@@ -430,7 +432,21 @@ class NowPlayingRunner:
             return
         self.restore_original_wallpaper()
         self._now_playing_wallpaper_active = False
-        self._last_composed_identity = None
+        self._last_applied_track_id = None
+
+    def _effective_track_for_wallpaper(self, track: TrackPlayback) -> TrackPlayback:
+        upgraded = self._upgraded_art_bytes.get(track.track_id)
+        if upgraded is None:
+            return track
+        return TrackPlayback(
+            track_id=track.track_id,
+            art_url=track.art_url,
+            title=track.title,
+            artist=track.artist,
+            album=track.album,
+            is_playing=track.is_playing,
+            art_bytes=upgraded,
+        )
 
     @staticmethod
     def _poll_state_label(track: TrackPlayback | None) -> str:
@@ -451,19 +467,19 @@ class NowPlayingRunner:
             if not self._playback_matches_ticket(ticket):
                 logger.debug("Skipping iTunes upgrade apply; playback no longer matches")
                 return
-            identity = (track.track_id, track.art_cache_key)
-            if self._last_composed_identity == identity:
-                return
+            if track.art_bytes:
+                self._upgraded_art_bytes[track.track_id] = track.art_bytes
+            render_track = self._effective_track_for_wallpaper(track)
             timing = ApplyTiming()
             try:
-                self._apply_wallpaper_for_track(track, timing)
+                self._apply_wallpaper_for_track(render_track, timing)
             except Exception as exc:
                 self._log_render_error_once(track.track_id, exc)
                 return
             finally:
                 timing.log_summary(prefix="Upgraded art")
             self._render_errors_logged.discard(track.track_id)
-            self._last_composed_identity = identity
+            self._last_applied_track_id = track.track_id
             self._now_playing_wallpaper_active = True
             self._state.session_active = True
             self._state.save(self.deps.state_path)
@@ -472,8 +488,11 @@ class NowPlayingRunner:
     def _schedule_itunes_upgrade_if_needed(self, track: TrackPlayback) -> None:
         if not online_art_enabled():
             return
+        if track.track_id in self._upgrade_attempted_track_ids:
+            return
         if not self._art_upgrader.should_schedule(track):
             return
+        self._upgrade_attempted_track_ids.add(track.track_id)
         self._art_upgrader.schedule(
             track,
             download_dir=self._download_dir,
@@ -483,9 +502,10 @@ class NowPlayingRunner:
         )
 
     def _apply_track_wallpaper(self, track: TrackPlayback) -> None:
+        render_track = self._effective_track_for_wallpaper(track)
         timing = ApplyTiming()
         try:
-            self._apply_wallpaper_for_track(track, timing)
+            self._apply_wallpaper_for_track(render_track, timing)
         except Exception as exc:
             self._log_render_error_once(track.track_id, exc)
             return
@@ -494,8 +514,7 @@ class NowPlayingRunner:
 
         self._render_errors_logged.discard(track.track_id)
         self._logged_idle_no_original_restore = False
-        identity = (track.track_id, track.art_cache_key)
-        self._last_composed_identity = identity
+        self._last_applied_track_id = track.track_id
         self._now_playing_wallpaper_active = True
         self._state.session_active = True
         self._state.save(self.deps.state_path)
@@ -512,14 +531,13 @@ class NowPlayingRunner:
         if not self._state.original_wallpaper_path and not self._state.original_wallpaper_snapshot:
             self._ensure_original_saved(activate_session=True)
 
-        identity = (track.track_id, track.art_cache_key)
-        if self._now_playing_wallpaper_active and identity == self._last_composed_identity:
+        if self._now_playing_wallpaper_active and self._last_applied_track_id == track.track_id:
             logger.debug("Track unchanged; skipping wallpaper update")
             return
 
         if (
-            self._last_composed_identity is not None
-            and self._last_composed_identity[0] != track.track_id
+            self._last_applied_track_id is not None
+            and self._last_applied_track_id != track.track_id
         ):
             self._art_upgrader.cancel_pending()
 
