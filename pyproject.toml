@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "now-playing-desktops"
 version = "1.0.0"
-description = "Set your desktop wallpaper to the album art of your currently playing Spotify track."
+description = "Glass-style album-art tile on your desktop wallpaper for the Spotify track (or local player) you are playing now."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
 authors = [{ name = "Joel Shearon" }]
-keywords = ["spotify", "desktop", "wallpaper", "album-art"]
+keywords = ["spotify", "desktop", "wallpaper", "album-art", "now-playing", "mpris"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: MacOS X",
@@ -20,6 +20,8 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Topic :: Desktop Environment",
+    "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
     "pillow>=11.0.0,<12",
@@ -27,6 +29,12 @@ dependencies = [
     "requests>=2.32.0,<3",
     "spotipy>=2.24.0,<3",
 ]
+
+[project.urls]
+Homepage = "https://github.com/hippi345/nowPlayingDesktops"
+Repository = "https://github.com/hippi345/nowPlayingDesktops"
+Issues = "https://github.com/hippi345/nowPlayingDesktops/issues"
+Documentation = "https://github.com/hippi345/nowPlayingDesktops#readme"
 
 [project.optional-dependencies]
 macos = ["appscript>=1.2.5,<2"]
@@ -39,10 +47,13 @@ windows = [
 ]
 linux = ["dbus-next>=0.2.3,<1"]
 dev = [
-    "pytest>=8.3.0,<9",
-    "pytest-cov>=6.0.0,<7",
+    "pytest>=9.1.0,<10",
+    "pytest-cov>=7.1.0,<8",
     "ruff>=0.9.0,<1",
     "mss>=9.0.0,<11",
+    "build>=1.2.0,<2",
+    "twine>=7.0.0,<8",
+    "pyinstaller>=6.10.0,<7",
 ]
 
 [project.scripts]

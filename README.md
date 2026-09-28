@@ -3,32 +3,34 @@
 [![CI](https://github.com/hippi345/nowPlayingDesktops/actions/workflows/ci.yml/badge.svg)](https://github.com/hippi345/nowPlayingDesktops/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Set your desktop wallpaper to the album art of whatever you are playing on Spotify (or another supported desktop player in **local** mode).
+**A glass-style album-art tile on your desktop wallpaper** for whatever you are playing on Spotify (or another supported player in **local** mode).
 
 ## Screenshots
 
 <p>
-  <img src="docs/screenshot-weston-estate.png" width="49%" alt="Now-playing wallpaper: Weston Estate, Is this the End?" />
-  <img src="docs/screenshot-lucky-daye.png" width="49%" alt="Now-playing wallpaper: Lucky Daye, Nowhere Fast" />
+  <img src="docs/screenshot-don-toliver.png" width="49%" alt="Now-playing wallpaper: Don Toliver, No Pole" />
+  <img src="docs/screenshot-ariana-grande.png" width="49%" alt="Now-playing wallpaper: Ariana Grande, Let Me Love You" />
 </p>
 
-## Which mode should I pick?
+<p align="center"><img src="docs/demo.gif" alt="Glass album-art tile updating as the track changes, then the original wallpaper restoring on pause" width="720"></p>
 
-| Mode | Command | What it needs | Players / devices | Account / app setup | Pros | Cons |
-|------|---------|---------------|-------------------|----------------------|------|------|
-| **Local** | `--source local` | Python 3.12+, OS extras below, media app **playing on this computer** | Spotify desktop (Windows SMTC, Linux MPRIS, macOS AppleScript); other MPRIS players on Linux may work if they expose metadata | None | No Spotify Developer app; no OAuth; playback detection works offline | Art is often a small system thumbnail unless [online art](#album-art-in-local-mode) is enabled; desktop app must be on this machine |
-| **Spotify** | `--source spotify` | Same Python install + `SPOTIPY_CLIENT_ID` in `.env` | Any device where **your** Spotify account is playing (phone, web, desktop, etc.) | [Spotify Developer](https://developer.spotify.com/dashboard) app; PKCE `login` once; Development mode **user allowlist** (up to 5 users) | High-resolution album art from the Web API | Requires Spotify credentials and allowlisted users in dev mode |
-| **Auto** | omit `--source`, or `--source auto`, or `NOW_PLAYING_SOURCE=auto` (default) | Resolves to Spotify or local using the rules below | Same as the **effective** mode | Same as the effective mode | One command whether or not you use the Web API | Surprising if you expected local but have `SPOTIPY_CLIENT_ID` set |
+## Quick start (Windows)
 
-**How `auto` resolves** (see `resolve_effective_playback_source` in `playback_source.py`):
+1. **Get the app** — download `now-playing-windows.exe` from [Releases](https://github.com/hippi345/nowPlayingDesktops/releases), or install with [pipx](https://pipx.pypa.io/): `pipx install now-playing-desktops`
+2. **Run it** — double-click the `.exe`, or run `now-playing run --source local` (pipx puts `now-playing` on your PATH)
+3. **Done** — play something in the Spotify desktop app; pause or exit to restore your wallpaper
 
-1. `--source spotify` or `NOW_PLAYING_SOURCE=spotify` → **Spotify** Web API.
-2. `--source local` or `NOW_PLAYING_SOURCE=local` → **local** OS media session.
-3. Otherwise (`auto`): if `SPOTIPY_CLIENT_ID` is set and non-empty in the environment (after `.env` load), effective mode is **Spotify**; if not, **local**.
+For macOS, Linux, Spotify Web API mode, or hacking on the code, see the sections below.
 
-A resolved Spotify run still needs a username (`SPOTIPY_CLIENT_USERNAME` or a `run`/`login` argument) and a usable token cache from `now-playing login` (or legacy client-secret flow). **Online art** (iTunes Search lookups and Spotify art URL downloads) applies to **local** mode by default; see [Album art in local mode](#album-art-in-local-mode).
+## Install from source
 
-Legacy console scripts `now-playing-macos` and `now-playing-windows` behave like `now-playing run …` when you omit the `run` subcommand.
+```bash
+git clone https://github.com/hippi345/nowPlayingDesktops.git
+cd nowPlayingDesktops
+python3.12 -m venv .venv
+source .venv/bin/activate   # Windows: .\.venv\Scripts\Activate.ps1
+pip install -e ".[dev]"     # add windows, linux, or macos extras as needed
+```
 
 ---
 
@@ -256,6 +258,26 @@ Stop a foreground `run` with `Ctrl+C`; the original wallpaper is restored automa
 - **Linux** — GNOME (`gsettings`), KDE (`plasma-apply-wallpaperimage` / `qdbus`), or fallbacks (`feh`, `swaybg`, `nitrogen`).
 
 Session state: `wallpaper-state.json` in the config directory. If a previous run exited without restoring (`session_active`), the next startup restores immediately.
+
+---
+
+## Which mode should I pick?
+
+| Mode | Command | What it needs | Players / devices | Account / app setup | Pros | Cons |
+|------|---------|---------------|-------------------|----------------------|------|------|
+| **Local** | `--source local` | Python 3.12+, OS extras below, media app **playing on this computer** | Spotify desktop (Windows SMTC, Linux MPRIS, macOS AppleScript); other MPRIS players on Linux may work if they expose metadata | None | No Spotify Developer app; no OAuth; playback detection works offline | Art is often a small system thumbnail unless [online art](#album-art-in-local-mode) is enabled; desktop app must be on this machine |
+| **Spotify** | `--source spotify` | Same Python install + `SPOTIPY_CLIENT_ID` in `.env` | Any device where **your** Spotify account is playing (phone, web, desktop, etc.) | [Spotify Developer](https://developer.spotify.com/dashboard) app; PKCE `login` once; Development mode **user allowlist** (up to 5 users) | High-resolution album art from the Web API | Requires Spotify credentials and allowlisted users in dev mode |
+| **Auto** | omit `--source`, or `--source auto`, or `NOW_PLAYING_SOURCE=auto` (default) | Resolves to Spotify or local using the rules below | Same as the **effective** mode | Same as the effective mode | One command whether or not you use the Web API | Surprising if you expected local but have `SPOTIPY_CLIENT_ID` set |
+
+**How `auto` resolves** (see `resolve_effective_playback_source` in `playback_source.py`):
+
+1. `--source spotify` or `NOW_PLAYING_SOURCE=spotify` → **Spotify** Web API.
+2. `--source local` or `NOW_PLAYING_SOURCE=local` → **local** OS media session.
+3. Otherwise (`auto`): if `SPOTIPY_CLIENT_ID` is set and non-empty in the environment (after `.env` load), effective mode is **Spotify**; if not, **local**.
+
+A resolved Spotify run still needs a username (`SPOTIPY_CLIENT_USERNAME` or a `run`/`login` argument) and a usable token cache from `now-playing login` (or legacy client-secret flow). **Online art** (iTunes Search lookups and Spotify art URL downloads) applies to **local** mode by default; see [Album art in local mode](#album-art-in-local-mode).
+
+Legacy console scripts `now-playing-macos` and `now-playing-windows` behave like `now-playing run …` when you omit the `run` subcommand.
 
 ---
 

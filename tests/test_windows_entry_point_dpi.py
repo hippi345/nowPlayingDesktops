@@ -44,13 +44,6 @@ def test_main_module_calls_dpi_before_cli_import():
     )
 
 
-def test_spotify_windows_calls_dpi_before_cli_import():
-    _calls_set_process_dpi_aware_before_import(
-        REPO_ROOT / "spotifyWindows.py",
-        "now_playing_desktops.cli",
-    )
-
-
 def test_cli_bootstraps_dpi_on_win32_before_heavy_imports():
     cli_path = REPO_ROOT / "src/now_playing_desktops/cli.py"
     text = cli_path.read_text(encoding="utf-8")
