@@ -8,12 +8,11 @@
 ## Screenshots
 
 <p>
-  <img src="docs/screenshot-weston-estate.png" width="49%" alt="Now-playing wallpaper: Weston Estate, Is this the End?" />
-  <img src="docs/screenshot-lucky-daye.png" width="49%" alt="Now-playing wallpaper: Lucky Daye, Nowhere Fast" />
+  <img src="docs/screenshot-don-toliver.png" width="49%" alt="Now-playing wallpaper: Don Toliver, No Pole" />
+  <img src="docs/screenshot-ariana-grande.png" width="49%" alt="Now-playing wallpaper: Ariana Grande, Let Me Love You" />
 </p>
 
-<!-- GIF placeholder: short demo of the tile updating when the track changes, then restoring the original wallpaper on pause. -->
-<p align="center"><em>Demo GIF coming soon — track changes and pause/restore.</em></p>
+<p align="center"><img src="docs/demo.gif" alt="Glass album-art tile updating as the track changes, then the original wallpaper restoring on pause" width="720"></p>
 
 ## Quick start (Windows)
 
