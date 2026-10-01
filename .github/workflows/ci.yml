@@ -50,6 +50,12 @@ jobs:
           /tmp/npd-packaging-venv/bin/now-playing --help
           /tmp/npd-packaging-venv/bin/python -m now_playing_desktops --help
 
+      - name: PyInstaller Linux release binary
+        run: |
+          pip install -e ".[linux]"
+          pyinstaller --noconfirm packaging/now-playing-linux.spec
+          dist/now-playing-linux --help
+
       - name: Tests
         run: pytest --cov=now_playing_desktops --cov-report=term-missing -q
 
