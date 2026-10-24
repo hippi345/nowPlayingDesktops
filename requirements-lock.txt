@@ -6,7 +6,7 @@ idna==3.20
 iniconfig==2.3.0
 -e git+https://github.com/hippi345/nowPlayingDesktops@478feaf2c59d30456469a12992cb36cf2deaee15#egg=now_playing_desktops
 packaging==26.3
-pluggy==1.6.0
+pluggy==1.7.0
 Pygments==2.21.0
 pyproject_hooks==1.3.3
 pytest==9.1.1
