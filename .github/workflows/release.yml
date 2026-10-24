@@ -46,7 +46,7 @@ jobs:
 
       - name: Attach to GitHub Release
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/now-playing-windows.exe
           generate_release_notes: true
