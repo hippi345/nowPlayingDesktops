@@ -72,6 +72,30 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev,windows]"
 
+      - name: Assert newer winrt packages resolved
+        shell: bash
+        run: |
+          python - <<'PY'
+          import importlib.metadata as metadata
+
+          expected = {
+              "winrt-runtime": "4.0.3",
+              "winrt-Windows.Foundation": "4!10.0.28000.2705",
+              "winrt-Windows.Foundation.Collections": "4!10.0.28000.2705",
+              "winrt-Windows.Media.Control": "4!10.0.28000.2705",
+              "winrt-Windows.Storage.Streams": "4!10.0.28000.2705",
+          }
+          failed = False
+          for name, version in expected.items():
+              installed = metadata.version(name)
+              print(f"{name}=={installed}")
+              if installed != version:
+                  print(f"MISMATCH {name}: expected {version}")
+                  failed = True
+          if failed:
+              raise SystemExit(1)
+          PY
+
       - name: Ruff
         run: ruff check src tests
 
