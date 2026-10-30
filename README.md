@@ -14,9 +14,21 @@
 
 <p align="center"><img src="docs/demo.gif" alt="Glass album-art tile updating as the track changes, then the original wallpaper restoring on pause" width="720"></p>
 
+## Download (pre-built)
+
+GitHub [Releases](https://github.com/hippi345/nowPlayingDesktops/releases) attach one-file PyInstaller builds per OS (also available as workflow artifacts from **Actions → Release → Run workflow** with dry run enabled):
+
+| OS | Download | Run |
+|----|----------|-----|
+| **Windows** | `now-playing-windows.exe` | Double-click or run from a terminal |
+| **macOS** | `now-playing-macos` | `chmod +x now-playing-macos && ./now-playing-macos run --source local` |
+| **Linux** | `now-playing-linux` | `chmod +x now-playing-linux && ./now-playing-linux run --source local` |
+
+Or install with [pipx](https://pipx.pypa.io/): `pipx install now-playing-desktops`
+
 ## Quick start (Windows)
 
-1. **Get the app** — download `now-playing-windows.exe` from [Releases](https://github.com/hippi345/nowPlayingDesktops/releases), or install with [pipx](https://pipx.pypa.io/): `pipx install now-playing-desktops`
+1. **Get the app** — download `now-playing-windows.exe` from [Releases](https://github.com/hippi345/nowPlayingDesktops/releases), or use pipx (above)
 2. **Run it** — double-click the `.exe`, or run `now-playing run --source local` (pipx puts `now-playing` on your PATH)
 3. **Done** — play something in the Spotify desktop app; pause or exit to restore your wallpaper
 
@@ -59,7 +71,10 @@ now-playing run --source local
 
 ### Linux (local)
 
-**Prerequisites**
+1. **Get the app** — download `now-playing-linux` from [Releases](https://github.com/hippi345/nowPlayingDesktops/releases), `chmod +x` it, and run `./now-playing-linux run --source local`, or install from source below.
+2. **Player** — Spotify desktop or another **MPRIS** player; pause or exit restores your wallpaper.
+
+**Prerequisites (source install)**
 
 - **Python 3.12+**
 - **Install:** `pip install -e ".[linux]"` (`dbus-next` for MPRIS).
@@ -78,7 +93,10 @@ now-playing run --source local
 
 ### macOS (local)
 
-**Prerequisites**
+1. **Get the app** — download `now-playing-macos` from [Releases](https://github.com/hippi345/nowPlayingDesktops/releases), `chmod +x` it, and run `./now-playing-macos run --source local`, or install from source below.
+2. **Player** — **Spotify.app** on this Mac; pause or exit restores your wallpaper.
+
+**Prerequisites (source install)**
 
 - **Python 3.12+**
 - **Install:** `pip install -e ".[macos]"` (`appscript` for Spotify AppleScript control).
