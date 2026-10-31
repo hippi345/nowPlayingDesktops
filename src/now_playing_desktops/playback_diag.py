@@ -15,11 +15,14 @@ from now_playing_desktops.playback_source import (
     PlaybackSourceSetting,
     resolve_effective_playback_source,
 )
+from now_playing_desktops.playback_types import TrackPlayback
 from now_playing_desktops.sources.local import build_local_provider
 from now_playing_desktops.sources.spotify_provider import SpotifyPlaybackProvider
 
 
-def _format_track_line(prefix: str, track, *, art_cache_dir: Path | None = None) -> str:
+def _format_track_line(
+    prefix: str, track: TrackPlayback | None, *, art_cache_dir: Path | None = None
+) -> str:
     if track is None:
         return f"{prefix}: (no session)"
     state = "playing" if track.is_playing else "paused"
