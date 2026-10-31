@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 
@@ -28,7 +29,7 @@ class ApplyTiming:
         self.cache_status = status
 
     @contextmanager
-    def stage(self, name: str):
+    def stage(self, name: str) -> Iterator[None]:
         if not self.enabled:
             yield
             return
