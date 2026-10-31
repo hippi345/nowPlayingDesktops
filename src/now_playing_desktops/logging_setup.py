@@ -7,6 +7,7 @@ import sys
 import threading
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from types import TracebackType
 
 from now_playing_desktops.config import user_config_dir
 
@@ -25,7 +26,9 @@ def log_file_path() -> Path:
 def install_exception_logging() -> None:
     """Route uncaught main-thread and worker-thread exceptions to the app log."""
 
-    def _log_exception(exc_type, exc, tb) -> None:
+    def _log_exception(
+        exc_type: type[BaseException], exc: BaseException, tb: TracebackType | None
+    ) -> None:
         if exc_type is KeyboardInterrupt:
             sys.__excepthook__(exc_type, exc, tb)
             return
