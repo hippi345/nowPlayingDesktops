@@ -1,5 +1,11 @@
 # nowPlayingDesktops
 
+<p align="center"><img src="docs/demo.gif" alt="Glass album-art tile updating as the track changes, then the original wallpaper restoring on pause" width="720"></p>
+
+```bash
+pipx install now-playing-desktops && now-playing run --source local
+```
+
 [![CI](https://github.com/hippi345/nowPlayingDesktops/actions/workflows/ci.yml/badge.svg)](https://github.com/hippi345/nowPlayingDesktops/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -11,8 +17,6 @@
   <img src="docs/screenshot-don-toliver.png" width="49%" alt="Now-playing wallpaper: Don Toliver, No Pole" />
   <img src="docs/screenshot-ariana-grande.png" width="49%" alt="Now-playing wallpaper: Ariana Grande, Let Me Love You" />
 </p>
-
-<p align="center"><img src="docs/demo.gif" alt="Glass album-art tile updating as the track changes, then the original wallpaper restoring on pause" width="720"></p>
 
 ## Quick start (Windows)
 
