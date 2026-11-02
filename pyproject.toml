@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "now-playing-desktops"
-version = "1.0.0"
+version = "1.0.1"
 description = "Glass-style album-art tile on your desktop wallpaper for the Spotify track (or local player) you are playing now."
 readme = "README.md"
 license = "MIT"
