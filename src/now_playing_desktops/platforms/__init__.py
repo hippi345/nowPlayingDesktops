@@ -29,7 +29,7 @@ def get_platform() -> WallpaperPlatform:
         except OSError as exc:
             raise UnsupportedPlatformError(
                 "Linux wallpaper backend unavailable; install gsettings (GNOME), "
-                "plasma tools (KDE), or feh/swaybg/nitrogen."
+                "plasma tools (KDE), xfconf-query (XFCE), or feh/swaybg/nitrogen."
             ) from exc
     raise UnsupportedPlatformError(
         f"Unsupported platform {sys.platform!r}; wallpaper control is not available."

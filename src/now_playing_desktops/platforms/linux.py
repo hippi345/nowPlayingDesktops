@@ -1,7 +1,8 @@
-"""Linux desktop wallpaper across GNOME, KDE, and lightweight WM fallbacks."""
+"""Linux desktop wallpaper across GNOME, KDE, XFCE, and lightweight WM fallbacks."""
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from now_playing_desktops.platforms.linux_backends import (
     Backend,
     GnomeWallpaperBackend,
     KdeWallpaperBackend,
+    XfceWallpaperBackend,
     select_wm_fallback_backend,
 )
 from now_playing_desktops.platforms.linux_de import (
@@ -18,6 +20,8 @@ from now_playing_desktops.platforms.linux_de import (
     detect_linux_desktop_environment,
 )
 from now_playing_desktops.platforms.linux_screen import list_linux_screens, primary_screen_size
+
+logger = logging.getLogger(__name__)
 
 if sys.platform == "linux":
     _global_swaybg = None  # module-level for tests
@@ -41,6 +45,14 @@ class LinuxWallpaperPlatform:
             return GnomeWallpaperBackend()
         if de == LinuxDesktopEnvironment.KDE:
             return KdeWallpaperBackend()
+        if de == LinuxDesktopEnvironment.XFCE:
+            if XfceWallpaperBackend.available():
+                return XfceWallpaperBackend()
+            logger.info(
+                "XFCE session detected but xfconf-query is not installed; "
+                "using generic wallpaper fallback"
+            )
+            return select_wm_fallback_backend()
         return select_wm_fallback_backend()
 
     def set_wallpaper(self, path: Path, *, screen_id: str | None = None) -> None:
@@ -108,6 +120,8 @@ class LinuxWallpaperPlatform:
             self._backend = GnomeWallpaperBackend()
         elif backend_name == "kde":
             self._backend = KdeWallpaperBackend()
+        elif backend_name == "xfce":
+            self._backend = XfceWallpaperBackend()
         elif backend_name == "feh":
             from now_playing_desktops.platforms.linux_backends import FehWallpaperBackend
 
