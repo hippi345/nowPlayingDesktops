@@ -10,6 +10,7 @@ from enum import StrEnum
 class LinuxDesktopEnvironment(StrEnum):
     GNOME = "gnome"
     KDE = "kde"
+    XFCE = "xfce"
     OTHER = "other"
 
 
@@ -72,6 +73,10 @@ def detect_linux_desktop_environment(
     kde_hits = {"plasmashell", "kwin_wayland", "kwin_x11", "kde"}
     if tokens & kde_hits or processes & kde_hits:
         return LinuxDesktopEnvironment.KDE
+
+    for token in tokens:
+        if "xfce" in token.lower():
+            return LinuxDesktopEnvironment.XFCE
 
     for token in tokens:
         for marker in _GNOME_MARKERS:

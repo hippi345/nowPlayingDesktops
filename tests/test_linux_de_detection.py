@@ -28,6 +28,16 @@ def test_detect_kde_from_xdg_token():
     assert de == LinuxDesktopEnvironment.KDE
 
 
+def test_detect_xfce_from_xdg_colon_separated_list():
+    de = detect_linux_desktop_environment(env_tokens={"xfce", "gtk"}, process_names=set())
+    assert de == LinuxDesktopEnvironment.XFCE
+
+
+def test_detect_xfce_case_insensitive_token():
+    de = detect_linux_desktop_environment(env_tokens={"XFCE"}, process_names=set())
+    assert de == LinuxDesktopEnvironment.XFCE
+
+
 def test_detect_other_when_no_known_signals():
     de = detect_linux_desktop_environment(env_tokens={"i3"}, process_names={"i3"})
     assert de == LinuxDesktopEnvironment.OTHER

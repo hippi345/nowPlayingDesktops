@@ -69,7 +69,7 @@ now-playing run --source local
 - **Install:** `pip install -e ".[linux]"` (`dbus-next` for MPRIS).
 - **D-Bus session:** `echo $DBUS_SESSION_BUS_ADDRESS` should be set in your desktop session.
 - **Player:** Spotify desktop or another app with **MPRIS** (`org.mpris.MediaPlayer2.*`). `playerctl` is not required by this app.
-- **Wallpaper backend** (one of): GNOME family — `gsettings`; KDE — `plasma-apply-wallpaperimage` and/or `qdbus6` / `qdbus`; other WMs — `feh`, `swaybg`, or `nitrogen` (plus `xrandr` or `wlr-randr` for screen size).
+- **Wallpaper backend** (one of): GNOME family — `gsettings`; KDE — `plasma-apply-wallpaperimage` and/or `qdbus6` / `qdbus`; XFCE — `xfconf-query` on `xfce4-desktop` backdrop keys (`xfce4-settings`); other WMs — `feh`, `swaybg`, or `nitrogen` (plus `xrandr` or `wlr-randr` for screen size).
 
 **Run**
 
@@ -170,7 +170,7 @@ Spotify mode uses the Web API (any device). Wallpaper setup is the same on every
 
 - **Python 3.12+**
 - **Install:** `pip install -e .`
-- **Wallpaper backend** (same as local): `gsettings` (GNOME), `plasma-apply-wallpaperimage` / `qdbus6` / `qdbus` (KDE), or `feh` / `swaybg` / `nitrogen` on lightweight WMs.
+- **Wallpaper backend** (same as local): `gsettings` (GNOME), `plasma-apply-wallpaperimage` / `qdbus6` / `qdbus` (KDE), `xfconf-query` (XFCE), or `feh` / `swaybg` / `nitrogen` on lightweight WMs.
 
 ### macOS (Spotify)
 
@@ -259,7 +259,7 @@ Stop a foreground `run` with `Ctrl+C`; the original wallpaper is restored automa
 - Composes a blurred backdrop, glass panel, cover art, and track labels; restores your original wallpaper on pause or exit.
 - **Windows** — multi-monitor aware; optional per-monitor wallpaper when `IDesktopWallpaper` is available.
 - **macOS** — sets wallpaper on every display (AppKit / `osascript`).
-- **Linux** — GNOME (`gsettings`), KDE (`plasma-apply-wallpaperimage` / `qdbus`), or fallbacks (`feh`, `swaybg`, `nitrogen`).
+- **Linux** — GNOME (`gsettings`), KDE (`plasma-apply-wallpaperimage` / `qdbus`), XFCE (`xfconf-query`), or fallbacks (`feh`, `swaybg`, `nitrogen`).
 
 Session state: `wallpaper-state.json` in the config directory. If a previous run exited without restoring (`session_active`), the next startup restores immediately.
 
@@ -297,7 +297,7 @@ Legacy console scripts `now-playing-macos` and `now-playing-windows` behave like
 | **Verbose** | `-v` / `--verbose` on any subcommand that accepts shared flags. |
 | **Compose quality checks** | Set `NOW_PLAYING_COMPOSE_VERIFY=1` to run optional post-apply checks in a background thread (never blocks wallpaper set). |
 | **Apply timing** | Look for `Apply took X.XXs (fetch=…, compose=…, save=…, set=…, cache=hit\|miss)` in logs; background upgrades log `Upgraded art Apply took …`. |
-| **Linux unsupported platform** | Install `feh`, `swaybg`, or `nitrogen`, or use GNOME/KDE with their wallpaper tools. |
+| **Linux unsupported platform** | Install `feh`, `swaybg`, or `nitrogen`, or use GNOME/KDE/XFCE with their wallpaper tools (`xfconf-query` on XFCE). |
 | **Local mode: no track** | Start the desktop player and press play; on Windows install `pip install -e ".[windows]"`. |
 | **OAuth port in use** | Change `SPOTIPY_REDIRECT_URI` and register the new URI in the Spotify dashboard. |
 
